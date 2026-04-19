@@ -1,0 +1,195 @@
+{
+  "desconto_percentual": 0.0405,
+  "secretarias": [
+    {
+      "sigla": "SEMUTTRANS",
+      "empenho_2026": 419097.82,
+      "limite_quinzenal": 19957.04,
+      "limites_litros": {
+        "gasolina": 367,
+        "alcool": 6647,
+        "diesel": 1121
+      }
+    },
+    {
+      "sigla": "SMCC",
+      "empenho_2026": 218260.37,
+      "limite_quinzenal": 10393.35,
+      "limites_litros": {
+        "gasolina": 317,
+        "alcool": 3366,
+        "diesel": 522
+      }
+    },
+    {
+      "sigla": "SMDS",
+      "empenho_2026": 778770.00,
+      "limite_quinzenal": 37084.29,
+      "limites_litros": {
+        "gasolina": 31,
+        "alcool": 10269,
+        "diesel": 4078
+      }
+    },
+    {
+      "sigla": "SMSU",
+      "empenho_2026": 1560000.00,
+      "limite_quinzenal": 74285.71,
+      "limites_litros": {
+        "gasolina": 670,
+        "alcool": 30550,
+        "diesel": 6390
+      }
+    },
+    {
+      "sigla": "SMAFEL",
+      "empenho_2026": 75569.76,
+      "limite_quinzenal": 3598.56,
+      "limites_litros": {
+        "gasolina": 113,
+        "alcool": 614,
+        "diesel": 536
+      }
+    },
+    {
+      "sigla": "SMS",
+      "empenho_2026": 1200000.00,
+      "limite_quinzenal": 57142.86,
+      "limites_litros": {
+        "gasolina": 50,
+        "alcool": 5975,
+        "diesel": 4185
+      }
+    },
+    {
+      "sigla": "SMMAP",
+      "empenho_2026": 75234.24,
+      "limite_quinzenal": 3582.58,
+      "limites_litros": {
+        "gasolina": 0,
+        "alcool": 895,
+        "diesel": 460
+      }
+    },
+    {
+      "sigla": "SMCS",
+      "empenho_2026": 42249.60,
+      "limite_quinzenal": 2011.89,
+      "limites_litros": {
+        "gasolina": 0,
+        "alcool": 900,
+        "diesel": 0
+      }
+    },
+    {
+      "sigla": "SMO",
+      "empenho_2026": 51638.40,
+      "limite_quinzenal": 2458.97,
+      "limites_litros": {
+        "gasolina": 0,
+        "alcool": 1100,
+        "diesel": 0
+      }
+    },
+    {
+      "sigla": "SMGAED",
+      "empenho_2026": 8215.20,
+      "limite_quinzenal": 391.20,
+      "limites_litros": {
+        "gasolina": 0,
+        "alcool": 175,
+        "diesel": 0
+      }
+    },
+    {
+      "sigla": "SMF",
+      "empenho_2026": 30983.04,
+      "limite_quinzenal": 1475.38,
+      "limites_litros": {
+        "gasolina": 0,
+        "alcool": 660,
+        "diesel": 0
+      }
+    },
+    {
+      "sigla": "SMOU",
+      "empenho_2026": 717886.30,
+      "limite_quinzenal": 34185.06,
+      "limites_litros": {
+        "gasolina": 1016,
+        "alcool": 5315,
+        "diesel": 5485
+      }
+    },
+    {
+      "sigla": "SME",
+      "empenho_2026": 370116.00,
+      "limite_quinzenal": 17624.57,
+      "limites_litros": {
+        "gasolina": 0,
+        "alcool": 2500,
+        "diesel": 3500
+      }
+    },
+    {
+      "sigla": "SMA",
+      "empenho_2026": 271571.37,
+      "limite_quinzenal": 12931.97,
+      "limites_litros": {
+        "gasolina": 631,
+        "alcool": 7100,
+        "diesel": 1715
+      }
+    },
+    {
+      "sigla": "SMTI",
+      "empenho_2026": 13895.42,
+      "limite_quinzenal": 661.69,
+      "limites_litros": {
+        "gasolina": 0,
+        "alcool": 296,
+        "diesel": 0
+      }
+    },
+    {
+      "sigla": "SMSM",
+      "empenho_2026": 730741.36,
+      "limite_quinzenal": 34797.21,
+      "limites_litros": {
+        "gasolina": 900,
+        "alcool": 5800,
+        "diesel": 5462
+      }
+    },
+    {
+      "sigla": "SEMEDES",
+      "empenho_2026": 69083.86,
+      "limite_quinzenal": 3289.71,
+      "limites_litros": {
+        "gasolina": 0,
+        "alcool": 564,
+        "diesel": 590
+      }
+    },
+    {
+      "sigla": "SMCT",
+      "empenho_2026": 99810.43,
+      "limite_quinzenal": 4752.88,
+      "limites_litros": {
+        "gasolina": 0,
+        "alcool": 1197,
+        "diesel": 604
+      }
+    },
+    {
+      "sigla": "SMMF",
+      "empenho_2026": 39573.79,
+      "limite_quinzenal": 1884.47,
+      "limites_litros": {
+        "gasolina": 0,
+        "alcool": 843,
+        "diesel": 0
+      }
+    }
+  ]
+}
