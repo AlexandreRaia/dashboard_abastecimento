@@ -175,43 +175,21 @@ def make_line_real_previsto_projecao(
 	# Previsto acumulado
 	if usar_limite_quinzenal_secretaria and not df_limits.empty:
 		previsto_mensal = float(df_limits["limite_quinzenal"].sum()) * 2.0
+		previsto_total = previsto_mensal * 12
 	else:
 		empenho_total = float(df_limits["empenho_2026"].sum())
-		previsto_mensal = empenho_total / 12.0
-	mensal_real["acumulado_previsto"] = [previsto_mensal * (i + 1) for i in range(len(mensal_real))]
+		previsto_total = empenho_total
+		previsto_mensal = previsto_total / 12.0
 
-	# Projeção futura
-	from datetime import datetime
-	hoje = datetime.now()
-	ano_atual = hoje.year
-	mensal_ano = mensal_real[mensal_real["ano"] == ano_atual]
-	if mensal_ano.empty:
-		media_mensal = 0.0
-		acumulado_hoje = 0.0
-		mes_ultimo = hoje.month
-		x_real = []
-		y_real = []
-	else:
-		media_mensal = mensal_ano["valor"].mean()
-		acumulado_hoje = mensal_ano["valor"].cumsum().iloc[-1]
-		mes_ultimo = mensal_ano["mes"].iloc[-1]
-		x_real = mensal_ano["mes_nome"].tolist()
-		y_real = mensal_ano["acumulado_real"].tolist()
-
-	meses_restantes = 12 - mes_ultimo
-	meses_futuros = list(range(mes_ultimo+1, 13))
-	meses_futuros_nome = [MONTHS[m] for m in meses_futuros]
-	projecao = [acumulado_hoje + media_mensal * (i+1) for i in range(meses_restantes)]
-
-	# Eixo X completo
-	x_proj = meses_futuros_nome
-	x_previsto = mensal_real["mes_nome"].tolist()
+	# Sempre gerar o previsto acumulado para 12 meses
+	meses_previstos = [MONTHS[m] for m in range(1, 13)]
+	acumulado_previsto = [previsto_mensal * (i + 1) for i in range(12)]
 
 	fig = go.Figure()
-	# Linha real
+	# Linha real acumulado (apenas meses presentes nos dados)
 	fig.add_trace(
 		go.Scatter(
-			x=x_previsto,
+			x=mensal_real["mes_nome"],
 			y=mensal_real["acumulado_real"],
 			mode="lines+markers+text",
 			name="Real acumulado",
@@ -221,30 +199,19 @@ def make_line_real_previsto_projecao(
 			textfont={"size": 14},
 		)
 	)
-	# Linha previsto
+	# Linha previsto acumulado (sempre 12 meses)
 	fig.add_trace(
 		go.Scatter(
-			x=x_previsto,
-			y=mensal_real["acumulado_previsto"],
+			x=meses_previstos,
+			y=acumulado_previsto,
 			mode="lines+markers",
 			name="Previsto acumulado",
 			line={"color": "#f4a259", "width": 3, "dash": "dash"},
 		)
 	)
-	# Linha projeção futura
-	if meses_restantes > 0:
-		fig.add_trace(
-			go.Scatter(
-				x=x_real + x_proj,
-				y=y_real + projecao,
-				mode="lines+markers",
-				name="Projeção futura",
-				line={"color": "#f59e0b", "width": 3, "dash": "dot"},
-			)
-		)
 	fig.update_layout(
 		template="plotly_dark",
-		title={"text": "Gasto acumulado: Real, Previsto e Projeção", "x": 0.01, "y": 0.98},
+		title={"text": "Gasto acumulado: Real x Previsto", "x": 0.01, "y": 0.98},
 		margin={"l": 30, "r": 30, "t": 78, "b": 30},
 		legend={
 			"orientation": "h",
@@ -252,7 +219,7 @@ def make_line_real_previsto_projecao(
 			"y": 1.03,
 			"yanchor": "bottom",
 			"font": {"size": 18, "color": "#eaf2ff"},
-			"bgcolor": "rgba(8, 17, 28, 0.75)",
+			"bgcolor": "rgba(8, 17, 28, 0.75)"
 		},
 		xaxis_title="Mês",
 		yaxis_title="Valor acumulado",
