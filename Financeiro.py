@@ -1,4 +1,105 @@
-from __future__ import annotations
+import pandas as pd
+import plotly.graph_objects as go
+
+def make_bar_consumo_tipo_mes(df_filtered: pd.DataFrame) -> go.Figure:
+	if df_filtered.empty:
+		fig = go.Figure()
+		fig.update_layout(template="plotly_dark", title="Sem dados para consumo por tipo e mês")
+		return apply_plotly_theme(fig)
+
+	# Agrupa por ano, mês, nome do mês e tipo de combustível
+	df = df_filtered.copy()
+	df["combustivel_grupo"] = df["combustivel"].map(
+		lambda value: "DIESEL"
+		if str(value).upper().startswith("DIESEL")
+		else ("ALCOOL" if str(value).upper() in {"ALCOOL", "ETANOL"} else str(value).upper())
+	)
+	df = df[df["combustivel_grupo"].isin(["GASOLINA", "DIESEL", "ALCOOL"])]
+	if df.empty:
+		fig = go.Figure()
+		fig.update_layout(template="plotly_dark", title="Sem dados para consumo por tipo e mês")
+		return apply_plotly_theme(fig)
+
+	grupo = (
+		df.groupby(["ano", "mes", "mes_nome", "combustivel_grupo"], as_index=False)
+		.agg(valor_total=("valor", "sum"))
+		.sort_values(["ano", "mes", "combustivel_grupo"])
+	)
+	grupo["periodo"] = grupo.apply(lambda row: f"{row['mes_nome']}/{int(row['ano'])}", axis=1)
+
+	# Calcular média por tipo de combustível
+	medias = grupo.groupby("combustivel_grupo")["valor_total"].mean()
+	color_map = {"GASOLINA": "#2563eb", "DIESEL": "#fb7185", "ALCOOL": "#f97316"}
+	fig = go.Figure()
+	for idx, fuel in enumerate(["GASOLINA", "DIESEL", "ALCOOL"]):
+		dados = grupo[grupo["combustivel_grupo"] == fuel]
+		if dados.empty:
+			continue
+		media = medias.get(fuel, 0)
+		azul = [min(v, media) for v in dados["valor_total"]]
+		vermelho = [max(0, v - media) for v in dados["valor_total"]]
+		total = [a + r for a, r in zip(azul, vermelho)]
+		# Barras até a média (base)
+		fig.add_trace(
+			go.Bar(
+				x=dados["periodo"],
+				y=azul,
+				name=fuel.title(),
+				marker_color=color_map[fuel],
+				text=[f"R$ {v:,.2f}" if v > 0 and r == 0 else "" for v, r in zip(dados["valor_total"], vermelho)],
+				textposition="outside",
+				offsetgroup=fuel,
+				legendgroup=fuel,
+				showlegend=True,
+				customdata=list(zip(azul, vermelho, total)),
+				hovertemplate="<b>%{x}</b><br>Consumo até média: R$ %{customdata[0]:,.2f}<br>Excesso: R$ %{customdata[1]:,.2f}<br>Total: R$ %{customdata[2]:,.2f}<extra></extra>",
+				textfont_size=12,
+				textfont_color="#fff",
+				textfont_family="'Space Grotesk', sans-serif",
+			)
+		)
+		# Barras excesso (no topo, vermelho, legenda só na primeira vez)
+		show_excesso_legend = idx == 0
+		fig.add_trace(
+			go.Bar(
+				x=dados["periodo"],
+				y=vermelho,
+				name="Excesso sobre média" if show_excesso_legend else None,
+				marker_color="#e63946",
+				text=[f"R$ {v:,.2f}" if r > 0 else "" for v, r in zip(dados["valor_total"], vermelho)],
+				textposition="outside",
+				offsetgroup=fuel,
+				legendgroup="excesso",
+				base=azul,
+				showlegend=show_excesso_legend,
+				customdata=list(zip(azul, vermelho, total)),
+				hovertemplate="<b>%{x}</b><br>Consumo até média: R$ %{customdata[0]:,.2f}<br>Excesso: R$ %{customdata[1]:,.2f}<br>Total: R$ %{customdata[2]:,.2f}<extra></extra>",
+				textfont_size=12,
+				textfont_color="#fff",
+				textfont_family="'Space Grotesk', sans-serif",
+			)
+		)
+		# Valor total no topo da barra empilhada (acima da barra)
+		# Texto exatamente no topo da barra mais alta
+		# (Removido: agora o texto está no próprio go.Bar)
+	fig.update_layout(
+		template="plotly_dark",
+		xaxis_title={"text": "Período", "font": {"size": 14}},
+		yaxis_title={"text": "Valor faturado (R$)", "font": {"size": 14}},
+		barmode="relative",
+		margin={"l": 30, "r": 30, "t": 90, "b": 30},
+		legend={
+			"orientation": "h",
+			"x": 0.01,
+			"y": 1.04,
+			"xanchor": "left",
+			"yanchor": "bottom",
+			"font": {"size": 12, "color": "#eaf2ff"}
+		},
+	)
+	fig = apply_plotly_theme(fig)
+	fig.update_layout(title={"text": "Consumo de combustível por mês e tipo", "x": 0.01, "y": 0.98, "font": {"size": 22}})
+	return fig
 from bar_consumo_combustivel import make_bar_consumo_combustivel
 from plotly_utils import apply_plotly_theme
 import json
@@ -13,6 +114,7 @@ def make_line_custo_medio_mes_combustivel(df_filtered: pd.DataFrame) -> go.Figur
 	if df_filtered.empty or not {'mes', 'ano', 'combustivel', 'valor', 'litros'}.issubset(df_filtered.columns):
 		fig = go.Figure()
 		fig.update_layout(template="plotly_dark", title="Sem dados para custo médio por mês/combustível")
+		fig.update_layout(template="plotly_dark", title="Custo médio de combustível por mês")
 		return apply_plotly_theme(fig)
 
 	# Agrupa por ano, mês e combustível
@@ -39,13 +141,14 @@ def make_line_custo_medio_mes_combustivel(df_filtered: pd.DataFrame) -> go.Figur
 		))
 	fig.update_layout(
 		template="plotly_dark",
-		title="Custo médio por mês por combustível",
 		xaxis_title="Mês",
 		yaxis_title="Custo médio (R$/L)",
 		margin={"l": 30, "r": 30, "t": 60, "b": 30},
 		legend={"font": {"size": 16, "color": "#eaf2ff"}},
 	)
-	return apply_plotly_theme(fig)
+	fig = apply_plotly_theme(fig)
+	fig.update_layout(title={"text": "Custo médio de combustível por mês", "x": 0.01, "y": 0.98, "font": {"size": 22}})
+	return fig
 
 
 
@@ -813,18 +916,19 @@ def make_donut_combustivel(df_filtered: pd.DataFrame) -> go.Figure:
 		return apply_plotly_theme(fig)
 
 	by_fuel = df_filtered.groupby("combustivel", as_index=False).agg(valor=("valor", "sum"))
+	color_map = {"GASOLINA": "#2563eb", "ALCOOL": "#ff7f0e", "DIESEL": "#fb7185", "DIESEL S10": "#38bdf8"}
 	fig = go.Figure(go.Pie(
 		labels=by_fuel["combustivel"],
 		values=by_fuel["valor"],
 		hole=0.5,
-		marker_colors=["#1f77b4" if c=="GASOLINA" else ("#ff7f0e" if c=="ALCOOL" else ("#d62728" if c=="DIESEL" else "#38bdf8")) for c in by_fuel["combustivel"]],
+		marker_colors=[color_map.get(c, "#2563eb") for c in by_fuel["combustivel"]],
 		textinfo="label+percent",
 		hoverinfo="label+value+percent",
 		showlegend=True
 	))
 	fig.update_layout(
 		template="plotly_dark",
-		title="Consumo por tipo de combustível",
+		title="Consumo combustível por tipo",
 		margin={"l": 20, "r": 20, "t": 50, "b": 80},
 		legend={
 			"font": {"size": 20, "color": "#f8fbff"},
@@ -1312,9 +1416,8 @@ def run_dashboard() -> None:
 		f"Valores monetarios exibidos com desconto contratual de {discount_rate * 100:.2f}% aplicado sobre o valor bruto do abastecimento."
 	)
 	monthly_scope = apply_filters(df_real, selected_ano, selected_mes, selected_secretaria, "Todos")
-	bar_mes_col, bar_comb_col = st.columns([2, 1])
-	bar_mes_col.plotly_chart(make_bar_gasto_por_mes(monthly_scope), use_container_width=True, key="bar_gasto_mes")
-	bar_comb_col.plotly_chart(make_bar_consumo_combustivel(filtered), use_container_width=True, key="bar_combustivel")
+	st.plotly_chart(make_bar_gasto_por_mes(monthly_scope), use_container_width=True, key="bar_gasto_mes")
+	st.plotly_chart(make_bar_consumo_tipo_mes(filtered), use_container_width=True, key="bar_combustivel")
 	line_col, donut_col = st.columns([2, 1])
 	line_col.plotly_chart(make_line_custo_medio_mes_combustivel(filtered), use_container_width=True, key="line_custo_medio_mes_combustivel")
 	donut_col.plotly_chart(make_donut_combustivel(filtered), use_container_width=True, key="donut_combustivel")
