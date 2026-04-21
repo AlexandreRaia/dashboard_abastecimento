@@ -531,8 +531,7 @@ def inject_style() -> None:
 		.alert-count-yellow { font-family:'Rajdhani',sans-serif; font-size:1.3rem; font-weight:700; color:#eab308; line-height:1; }
 		.alert-count-green  { font-family:'Rajdhani',sans-serif; font-size:1.3rem; font-weight:700; color:#22c55e; line-height:1; }
 		.alert-label { font-size: 0.75rem; color: #c9d8ea; }
-		.alert-sublabel { font-size: 0.62rem; color: #7a95b0; font-style: italic; }
-		.alert-detail { font-size: 0.65rem; color: #8ea3be; line-height: 1.5; }
+		.alert-detail { font-size: 0.65rem; color: #8ea3be; }
 
 		/* ── Última atualização ── */
 		.sidebar-footer {
@@ -978,16 +977,7 @@ def make_bar_valor_vs_limite_secretaria(status_df: pd.DataFrame) -> go.Figure:
         return apply_plotly_theme(fig)
 
     df["pct"] = df["gasto_valor"] / df["limite_valor_periodo"] * 100
-    df["desvio_valor"] = df["gasto_valor"] - df["limite_valor_periodo"]
     df = df.sort_values("pct", ascending=True)
-
-    # Deduz número de meses a partir de limite_valor_periodo / limite_mensal
-    _ref = df[df["limite_mensal"] > 0]
-    if not _ref.empty:
-        _months = round((_ref["limite_valor_periodo"] / _ref["limite_mensal"]).mean())
-        months_label = f"1 mês" if _months <= 1 else f"{int(_months)} meses"
-    else:
-        months_label = "período"
 
     def bar_color(pct):
         if pct > 100:
@@ -997,13 +987,7 @@ def make_bar_valor_vs_limite_secretaria(status_df: pd.DataFrame) -> go.Figure:
         return "#22c55e"
 
     colors = [bar_color(p) for p in df["pct"]]
-    pct_clip = df["pct"].clip(upper=200)
-
-    def bar_label(p, v, l, dev):
-        if p > 100:
-            return f"{p:.0f}%  ⚠ +R$ {dev:,.0f} acima do limite"
-        saldo = l - v
-        return f"{p:.0f}%  (R$ {v:,.0f} / R$ {l:,.0f}  · saldo R$ {saldo:,.0f})"
+    pct_clip = df["pct"].clip(upper=150)
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
@@ -1012,32 +996,26 @@ def make_bar_valor_vs_limite_secretaria(status_df: pd.DataFrame) -> go.Figure:
         orientation="h",
         marker_color=colors,
         text=[
-            bar_label(p, v, l, dev)
-            for p, v, l, dev in zip(df["pct"], df["gasto_valor"], df["limite_valor_periodo"], df["desvio_valor"])
+            f"{p:.0f}%  (R$ {v:,.0f} / R$ {l:,.0f})"
+            for p, v, l in zip(df["pct"], df["gasto_valor"], df["limite_valor_periodo"])
         ],
         textposition="outside",
         textfont={"size": 12, "color": "#eaf2ff"},
-        customdata=list(zip(df["gasto_valor"], df["limite_valor_periodo"], df["pct"], df["desvio_valor"])),
+        customdata=list(zip(df["gasto_valor"], df["limite_valor_periodo"], df["pct"])),
         hovertemplate=(
             "<b>%{y}</b><br>"
-            "Gasto acumulado: R$ %{customdata[0]:,.2f}<br>"
-            "Limite acumulado: R$ %{customdata[1]:,.2f}<br>"
-            f"  (limite mensal × {months_label})<br>"
-            "Uso: %{customdata[2]:.1f}%<br>"
-            "<b>Excesso: R$ %{customdata[3]:,.2f}</b><extra></extra>"
+            "Gasto: R$ %{customdata[0]:,.2f}<br>"
+            "Limite: R$ %{customdata[1]:,.2f}<br>"
+            "Uso: %{customdata[2]:.1f}%<extra></extra>"
         ),
         showlegend=False,
     ))
     fig.add_vline(x=100, line_dash="dash", line_color="#eab308", line_width=2)
-
-    max_pct = max(df["pct"].max(), 100)
-    x_range_max = max_pct * 1.45  # espaço suficiente para o label
-
     fig.update_layout(
         template="plotly_dark",
         xaxis_title="% do limite consumido",
-        xaxis={"range": [0, x_range_max], "ticksuffix": "%"},
-        margin={"l": 20, "r": 20, "t": 60, "b": 30},
+        xaxis={"range": [0, 155], "ticksuffix": "%"},
+        margin={"l": 20, "r": 80, "t": 60, "b": 30},
         height=max(400, 30 * len(df)),
     )
     fig = apply_plotly_theme(fig)
@@ -1355,7 +1333,7 @@ def run_dashboard() -> None:
 
 	with st.sidebar:
 		# ── Filtros ──
-		with st.expander("🔍 Filtros", expanded=False):
+		with st.expander("🔍 Filtros", expanded=True):
 			ano_default_idx = next((i for i, a in enumerate(anos_disponiveis) if a == str(datetime.date.today().year)), 0)
 			selected_ano = st.selectbox("Ano", anos_disponiveis, index=ano_default_idx, key="sel_ano")
 			selected_mes = st.selectbox("Mês", meses_disponiveis, index=0, key="sel_mes")
@@ -1373,46 +1351,18 @@ def run_dashboard() -> None:
 		df_alert_base = apply_filters(df_real, ano_corrente, "Todos", "Todas", "Todos")
 		status_alerts = build_secretaria_status(df_alert_base, df_limits)
 
-		excedidas = status_alerts[status_alerts["status"].isin(["ESTOURO POR PRECO", "ESTOURO GERAL"])].copy() if "status" in status_alerts.columns else pd.DataFrame()
+		excedidas = status_alerts[status_alerts["status"] == "ALERTA"].copy() if "status" in status_alerts.columns else pd.DataFrame()
 		proximas = status_alerts[
-			(status_alerts["status"] == "OK") &
 			(status_alerts["desvio_pct"] >= -20) & (status_alerts["desvio_pct"] < 0)
 		].copy() if "desvio_pct" in status_alerts.columns else pd.DataFrame()
-		ok = status_alerts[
-			(status_alerts["status"] == "OK") &
-			(status_alerts["desvio_pct"] < -20)
-		].copy() if "status" in status_alerts.columns else pd.DataFrame()
+		ok = status_alerts[status_alerts["status"] == "OK"].copy() if "status" in status_alerts.columns else pd.DataFrame()
 
 		n_exc = len(excedidas)
 		n_prox = len(proximas)
 		n_ok = len(ok)
 
-		months_alert = month_count(df_alert_base)
-		periodo_label = f"1 mês" if months_alert == 1 else f"{months_alert} meses"
-
-		# Excedidas: mostra "NOME: +R$ X.XXX"
-		if n_exc and "desvio_valor" in excedidas.columns:
-			_exc_parts = [
-				f"{row['secretaria']}: +R$\u00a0{row['desvio_valor']:,.0f}"
-				for _, row in excedidas.head(3).iterrows()
-			]
-			if n_exc > 3:
-				_exc_parts.append(f"+ {n_exc - 3} mais")
-			exc_names = "<br>".join(_exc_parts)
-		else:
-			exc_names = ""
-
-		# Próximas: mostra "NOME (X% restante)"
-		if n_prox and "desvio_pct" in proximas.columns:
-			_prox_parts = [
-				f"{row['secretaria']} ({abs(row['desvio_pct']):.0f}% restante)"
-				for _, row in proximas.head(3).iterrows()
-			]
-			if n_prox > 3:
-				_prox_parts.append(f"+ {n_prox - 3} mais")
-			prox_names = "<br>".join(_prox_parts)
-		else:
-			prox_names = ""
+		exc_names = ", ".join(excedidas["secretaria"].tolist()[:3]) if n_exc else ""
+		prox_names = ", ".join(proximas["secretaria"].tolist()[:3]) if n_prox else ""
 
 		st.markdown('<div class="sidebar-section">ALERTAS</div>', unsafe_allow_html=True)
 		st.markdown(
@@ -1421,8 +1371,7 @@ def run_dashboard() -> None:
 				<span class="alert-icon">🔴</span>
 				<div class="alert-body">
 					<span class="alert-count-red">{n_exc}</span>
-					<span class="alert-label">Limite acumulado excedido</span>
-					<span class="alert-sublabel">Gasto total &gt; limite × {periodo_label}</span>
+					<span class="alert-label">Limite mensal excedido</span>
 					<span class="alert-detail">{exc_names}</span>
 				</div>
 			</div>
@@ -1430,7 +1379,7 @@ def run_dashboard() -> None:
 				<span class="alert-icon">🟡</span>
 				<div class="alert-body">
 					<span class="alert-count-yellow">{n_prox}</span>
-					<span class="alert-label">Próximo do limite (&lt;20% restante)</span>
+					<span class="alert-label">Próximo do limite (&lt;20%)</span>
 					<span class="alert-detail">{prox_names}</span>
 				</div>
 			</div>
@@ -1458,8 +1407,6 @@ def run_dashboard() -> None:
 				with st.spinner("Importando dados..."):
 					try:
 						import re as _re, io as _io
-						_KNOWN_COLS = {"Placa", "Data/Hora", "Unidade", "Produto", "Qtde (L)", "Valor"}
-
 						def _sanitize(name):
 							s = name.strip().lower()
 							s = _re.sub(r'\s+', '_', s)
@@ -1467,20 +1414,11 @@ def run_dashboard() -> None:
 							s = _re.sub(r'_+', '_', s).strip('_')
 							return s or 'sheet'
 
-						def _find_header_row(raw_df):
-							"""Encontra a linha que contém os cabeçalhos reais."""
-							for i, row in raw_df.iterrows():
-								row_vals = set(str(v).strip() for v in row.values)
-								if len(_KNOWN_COLS & row_vals) >= 2:
-									return i
-							return None
-
-						_file_bytes = uploaded.read()
-						sheets_raw = pd.read_excel(_io.BytesIO(_file_bytes), sheet_name=None, header=None)
-						single_sheet = len(sheets_raw) == 1
+						sheets = pd.read_excel(_io.BytesIO(uploaded.read()), sheet_name=None)
+						single_sheet = len(sheets) == 1
 						used_tables = set()
 						with sqlite3.connect(str(DB_PATH)) as _conn:
-							for sheet_name, raw in sheets_raw.items():
+							for sheet_name, df_import in sheets.items():
 								base = 'abastecimentos' if single_sheet else _sanitize(sheet_name)
 								tbl = base
 								idx = 1
@@ -1488,50 +1426,13 @@ def run_dashboard() -> None:
 									idx += 1
 									tbl = f"{base}_{idx}"
 								used_tables.add(tbl)
-
-								header_row = _find_header_row(raw)
-								if header_row is not None:
-									df_import = pd.read_excel(
-										_io.BytesIO(_file_bytes),
-										sheet_name=sheet_name,
-										header=header_row,
-									)
-								else:
-									df_import = raw
-
 								df_import.to_sql(tbl, _conn, if_exists='replace', index=False)
 						st.session_state["_last_imported_file"] = uploaded.name
 						st.session_state["db_version"] = st.session_state.get("db_version", 0) + 1
-						for _k in ("sel_ano", "sel_mes", "sel_sec", "sel_comb"):
-							st.session_state.pop(_k, None)
 						st.success(f"✅ {uploaded.name} importado com sucesso! Recarregando...")
 						st.rerun()
 					except Exception as _e:
 						st.error(f"❌ Erro ao importar: {_e}")
-
-			st.divider()
-
-			uploaded_cfg = st.file_uploader(
-				"Importar config.json",
-				type=["json"],
-				help="Substitui o config.json atual com o arquivo enviado.",
-				key="upload_config",
-			)
-			_last_cfg = st.session_state.get("_last_imported_config")
-			if uploaded_cfg is not None and uploaded_cfg.name != _last_cfg:
-				try:
-					_cfg_bytes = uploaded_cfg.read()
-					json.loads(_cfg_bytes)  # valida JSON antes de salvar
-					CONFIG_PATH.write_bytes(_cfg_bytes)
-					get_limits_df.clear()
-					get_discount_rate.clear()
-					st.session_state["_last_imported_config"] = uploaded_cfg.name
-					st.success("✅ config.json atualizado com sucesso! Recarregando...")
-					st.rerun()
-				except json.JSONDecodeError as _e:
-					st.error(f"❌ Arquivo JSON inválido: {_e}")
-				except Exception as _e:
-					st.error(f"❌ Erro ao salvar config.json: {_e}")
 
 		# ── Rodapé ──
 		ultima_atualizacao = data_max.strftime("%d/%m/%Y") if (data_max and isinstance(data_max, datetime.date)) else "—"
