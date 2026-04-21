@@ -4,7 +4,7 @@
     {
       "sigla": "SEMUTTRANS",
       "empenho_2026": 419097.82,
-      "limite_quinzenal": 19957.04,
+      "limite_mensal": 34924.82,
       "limites_litros": {
         "gasolina": 367,
         "alcool": 6647,
@@ -14,7 +14,7 @@
     {
       "sigla": "SMCC",
       "empenho_2026": 218260.37,
-      "limite_quinzenal": 10393.35,
+      "limite_mensal": 18188.36,
       "limites_litros": {
         "gasolina": 317,
         "alcool": 3366,
@@ -24,7 +24,7 @@
     {
       "sigla": "SMDS",
       "empenho_2026": 778770.00,
-      "limite_quinzenal": 37084.29,
+      "limite_mensal": 64897.50,
       "limites_litros": {
         "gasolina": 31,
         "alcool": 10269,
@@ -34,7 +34,7 @@
     {
       "sigla": "SMSU",
       "empenho_2026": 1560000.00,
-      "limite_quinzenal": 74285.71,
+      "limite_mensal": 130000.00,
       "limites_litros": {
         "gasolina": 670,
         "alcool": 30550,
@@ -44,7 +44,7 @@
     {
       "sigla": "SMAFEL",
       "empenho_2026": 75569.76,
-      "limite_quinzenal": 3598.56,
+      "limite_mensal": 6297.48,
       "limites_litros": {
         "gasolina": 113,
         "alcool": 614,
@@ -54,7 +54,7 @@
     {
       "sigla": "SMS",
       "empenho_2026": 1200000.00,
-      "limite_quinzenal": 57142.86,
+      "limite_mensal": 100000.00,
       "limites_litros": {
         "gasolina": 50,
         "alcool": 5975,
@@ -64,7 +64,7 @@
     {
       "sigla": "SMMAP",
       "empenho_2026": 75234.24,
-      "limite_quinzenal": 3582.58,
+      "limite_mensal": 6269.52,
       "limites_litros": {
         "gasolina": 0,
         "alcool": 895,
@@ -74,7 +74,7 @@
     {
       "sigla": "SMCS",
       "empenho_2026": 42249.60,
-      "limite_quinzenal": 2011.89,
+      "limite_mensal": 3520.80,
       "limites_litros": {
         "gasolina": 0,
         "alcool": 900,
@@ -84,7 +84,7 @@
     {
       "sigla": "SMO",
       "empenho_2026": 51638.40,
-      "limite_quinzenal": 2458.97,
+      "limite_mensal": 4303.20,
       "limites_litros": {
         "gasolina": 0,
         "alcool": 1100,
@@ -94,7 +94,7 @@
     {
       "sigla": "SMGAED",
       "empenho_2026": 8215.20,
-      "limite_quinzenal": 391.20,
+      "limite_mensal": 684.60,
       "limites_litros": {
         "gasolina": 0,
         "alcool": 175,
@@ -104,7 +104,7 @@
     {
       "sigla": "SMF",
       "empenho_2026": 30983.04,
-      "limite_quinzenal": 1475.38,
+      "limite_mensal": 2581.92,
       "limites_litros": {
         "gasolina": 0,
         "alcool": 660,
@@ -114,7 +114,7 @@
     {
       "sigla": "SMOU",
       "empenho_2026": 717886.30,
-      "limite_quinzenal": 34185.06,
+      "limite_mensal": 59823.86,
       "limites_litros": {
         "gasolina": 1016,
         "alcool": 5315,
@@ -124,7 +124,7 @@
     {
       "sigla": "SME",
       "empenho_2026": 370116.00,
-      "limite_quinzenal": 17624.57,
+      "limite_mensal": 30843.00,
       "limites_litros": {
         "gasolina": 0,
         "alcool": 2500,
@@ -134,7 +134,7 @@
     {
       "sigla": "SMA",
       "empenho_2026": 271571.37,
-      "limite_quinzenal": 12931.97,
+      "limite_mensal": 22630.95,
       "limites_litros": {
         "gasolina": 631,
         "alcool": 7100,
@@ -144,7 +144,7 @@
     {
       "sigla": "SMTI",
       "empenho_2026": 13895.42,
-      "limite_quinzenal": 661.69,
+      "limite_mensal": 1157.95,
       "limites_litros": {
         "gasolina": 0,
         "alcool": 296,
@@ -154,7 +154,7 @@
     {
       "sigla": "SMSM",
       "empenho_2026": 730741.36,
-      "limite_quinzenal": 34797.21,
+      "limite_mensal": 60911.78,
       "limites_litros": {
         "gasolina": 900,
         "alcool": 5800,
@@ -164,7 +164,7 @@
     {
       "sigla": "SEMEDES",
       "empenho_2026": 69083.86,
-      "limite_quinzenal": 3289.71,
+      "limite_mensal": 5756.99,
       "limites_litros": {
         "gasolina": 0,
         "alcool": 564,
@@ -174,7 +174,7 @@
     {
       "sigla": "SMCT",
       "empenho_2026": 99810.43,
-      "limite_quinzenal": 4752.88,
+      "limite_mensal": 8317.54,
       "limites_litros": {
         "gasolina": 0,
         "alcool": 1197,
@@ -184,7 +184,7 @@
     {
       "sigla": "SMMF",
       "empenho_2026": 39573.79,
-      "limite_quinzenal": 1884.47,
+      "limite_mensal": 3297.82,
       "limites_litros": {
         "gasolina": 0,
         "alcool": 843,

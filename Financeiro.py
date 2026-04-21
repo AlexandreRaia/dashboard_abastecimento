@@ -306,7 +306,8 @@ def make_line_real_previsto_projecao(
 
 	# Previsto acumulado
 	if usar_limite_quinzenal_secretaria and not df_limits.empty:
-		previsto_mensal = float(df_limits["limite_quinzenal"].sum()) * 2.0
+		# Agora usa limite_mensal no lugar de limite_quinzenal
+		previsto_mensal = float(df_limits["limite_mensal"].sum())
 		previsto_total = previsto_mensal * 12
 	else:
 		empenho_total = float(df_limits["empenho_2026"].sum())
@@ -512,7 +513,7 @@ def load_config(path: Path) -> tuple[pd.DataFrame, float]:
 		row = {
 			"secretaria": normalize_secretaria(item.get("sigla")),
 			"empenho_2026": float(item.get("empenho_2026", 0.0)),
-			"limite_quinzenal": float(item.get("limite_quinzenal", 0.0)),
+			"limite_mensal": float(item.get("limite_mensal", 0.0)),
 			"limite_litros_gasolina": float(litros.get("gasolina", 0.0)),
 			"limite_litros_alcool": float(litros.get("alcool", 0.0)),
 			"limite_litros_diesel": float(litros.get("diesel", 0.0)),
@@ -627,7 +628,6 @@ def month_count(df: pd.DataFrame) -> int:
 
 def build_secretaria_status(df_filtered: pd.DataFrame, df_limits: pd.DataFrame) -> pd.DataFrame:
 	months = month_count(df_filtered)
-	quinzenas = months * 2
 
 	real = (
 		df_filtered.groupby("secretaria", as_index=False)
@@ -635,7 +635,10 @@ def build_secretaria_status(df_filtered: pd.DataFrame, df_limits: pd.DataFrame) 
 	)
 
 	base = df_limits.copy()
-	base["limite_valor_periodo"] = base["limite_quinzenal"] * quinzenas
+	print("Colunas de df_limits/base:", base.columns)
+	if "limite_mensal" not in base.columns:
+		raise KeyError(f"Coluna 'limite_mensal' não encontrada em df_limits/base. Colunas disponíveis: {list(base.columns)}")
+	base["limite_valor_periodo"] = base["limite_mensal"] * months
 	base["limite_litros_periodo"] = base["limite_litros_mensal"] * months
 
 	merged = base.merge(real, on="secretaria", how="left").fillna(0.0)
@@ -1642,7 +1645,11 @@ def currency(value: float) -> str:
 
 @st.cache_data(show_spinner=False)
 def get_limits_df() -> pd.DataFrame:
-	return load_config(CONFIG_PATH)[0]
+	df = load_config(CONFIG_PATH)[0]
+	# Remove campo legado se existir
+	if "limite_quinzenal" in df.columns:
+		df = df.drop(columns=["limite_quinzenal"])
+	return df
 
 
 @st.cache_data(show_spinner=False)
