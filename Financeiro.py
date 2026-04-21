@@ -61,14 +61,12 @@ def make_bar_gasto_por_mes_unificado(
 		return periodo
 
 	# Calcular meta mensal
-	import json as _json
-	with CONFIG_PATH.open("r", encoding="utf-8") as _f:
-		_config = _json.load(_f)
+	_limits_df = get_limits_df()
 	if selected_secretaria and selected_secretaria != "Todas":
-		_sec = next((s for s in _config.get("secretarias", []) if s.get("sigla", "").upper() == selected_secretaria.upper()), None)
-		meta_mensal = float(_sec.get("empenho_2026", 0.0)) / 12 if _sec else 0.0
+		_row = _limits_df[_limits_df["secretaria"].str.upper() == selected_secretaria.upper()]
+		meta_mensal = float(_row["empenho_2026"].iloc[0]) / 12 if not _row.empty else 0.0
 	else:
-		meta_mensal = sum(float(s.get("empenho_2026", 0.0)) for s in _config.get("secretarias", [])) / 12
+		meta_mensal = float(_limits_df["empenho_2026"].sum()) / 12
 
 	# Corrigir todos os labels e agregar valores por mês/ano único
 	monthly_totals["periodo_corrigido"] = monthly_totals["periodo"].apply(corrige_mes_nome)
@@ -89,40 +87,11 @@ def make_bar_gasto_por_mes_unificado(
 			agrupado["vermelho"],
 		)
 	)
-	def hover_azul_template():
-		return (
-			"<b>%{x}</b><br>"
-			"Variação mensal: %{customdata[0]:+.2f}%<br>"
-			"Litros: %{customdata[1]:,.0f}<br>"
-			"Meta mensal: R$ %{customdata[2]:,.2f}" +
-			"<br>%{customdata[3]|excedente}" +
-			"<extra></extra>"
-		)
-
-	def hover_vermelho_template():
-		return (
-			"<b>%{x}</b><br>"
-			"Excedeu: %{y:,.2f}<br>"
-			"Variação mensal: %{customdata[0]:+.2f}%<br>"
-			"Litros: %{customdata[1]:,.0f}<br>"
-			"Meta mensal: R$ %{customdata[2]:,.2f}<extra></extra>"
-		)
-
 	# Função para formatar o valor excedente no hover azul
 	def hover_excedente_str(excedente):
 		if excedente > 0:
 			return f"Excedeu: {excedente:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 		return ""
-
-	# Adiciona trace azul
-	x_labels = [corrige_mes_nome(p) for p in monthly_totals["periodo"]]
-	# Remover duplicidades mantendo ordem
-	seen = set()
-	x_labels_unique = []
-	for label in x_labels:
-		if label not in seen:
-			x_labels_unique.append(label)
-			seen.add(label)
 
 	fig.add_trace(
 		go.Bar(
@@ -225,13 +194,7 @@ def make_bar_gasto_por_ano(df: pd.DataFrame, selected_secretaria: str = "Todas",
         fig.update_layout(template="plotly_dark", title="Sem dados para gasto anual")
         return apply_plotly_theme(fig)
 
-    df_filtered = df.copy()
-    if selected_secretaria and selected_secretaria != "Todas":
-        df_filtered = df_filtered[df_filtered["secretaria"].str.upper() == selected_secretaria.upper()]
-    if selected_combustivel and selected_combustivel != "Todos":
-        df_filtered = df_filtered[df_filtered["combustivel"].str.upper() == selected_combustivel.upper()]
-
-    grupo = df_filtered.groupby("ano", as_index=False).agg(valor_total=("valor", "sum"))
+    grupo = df.groupby("ano", as_index=False).agg(valor_total=("valor", "sum"))
     grupo = grupo.sort_values("ano")
     fig = go.Figure(go.Bar(
         x=grupo["ano"].astype(str),
@@ -363,51 +326,6 @@ def make_donut_combustivel(df_filtered: pd.DataFrame) -> go.Figure:
 	return apply_plotly_theme(fig)
 
 
-
-	consumo = consumo.sort_values("gasto_valor", ascending=False)
-
-	# Definir cor: azul se dentro do limite, vermelho se acima
-	cor_consumo = [
-		"#2563eb" if (pd.notnull(lim) and val <= lim) else "#e63946"
-		for val, lim in zip(consumo["gasto_valor"], consumo["limite_valor_periodo"])
-	]
-
-	fig = go.Figure()
-	# Barra de consumo
-	fig.add_trace(go.Bar(
-		y=consumo["secretaria"],
-		x=consumo["gasto_valor"],
-		orientation="h",
-		name="Consumo",
-		marker_color=cor_consumo,
-		text=[f"R$ {v:,.0f}" for v in consumo["gasto_valor"]],
-		textposition="outside",
-		textfont={"color": "#fff", "size": 16},
-	))
-	# Barra de limite
-	if consumo["limite_valor_periodo"].notnull().any():
-		fig.add_trace(go.Bar(
-			y=consumo["secretaria"],
-			x=consumo["limite_valor_periodo"],
-			orientation="h",
-			name="Limite",
-			marker_color="#eab308",
-			opacity=0.5,
-			text=[f"R$ {v:,.0f}" if pd.notnull(v) else "" for v in consumo["limite_valor_periodo"]],
-			textposition="inside",
-			textfont={"color": "#222", "size": 14},
-		))
-
-	fig.update_layout(
-		barmode="overlay",
-		template="plotly_dark",
-		title={"text": "Ranking de Consumo por Secretaria (com Limite)", "x": 0.01, "y": 0.98},
-		margin={"l": 120, "r": 40, "t": 70, "b": 30},
-		yaxis={"categoryorder": "total ascending"},
-	)
-	return apply_plotly_theme(fig)
-
-
 def make_bullet_secretarias(status_df: pd.DataFrame) -> go.Figure:
 	# Ordenar secretarias pelo percentual gasto do empenho (gasto_valor / empenho_2026)
 	data = status_df.copy()
@@ -494,66 +412,6 @@ def make_bullet_secretarias(status_df: pd.DataFrame) -> go.Figure:
 			xanchor="left",
 			yanchor="middle",
 		)
-
-	# Cálculos corretos usando limite_valor_periodo
-	empenho = data["empenho_2026"]
-	limite_periodo = data["limite_valor_periodo"]
-	gasto = data["gasto_valor"]
-	gasto_ate_limite = gasto.where(gasto <= limite_periodo, limite_periodo)
-	excesso = (gasto - limite_periodo).clip(lower=0)
-	saldo = (empenho - gasto).clip(lower=0)
-
-	# Azul: gasto até limite
-	fig.add_trace(
-		go.Bar(
-			y=data["secretaria"],
-			x=gasto_ate_limite,
-			orientation="h",
-			name="Gasto até limite",
-			marker_color="#2563eb",  # Azul igual ao gráfico de barras
-			opacity=0.95,
-			text=[f"R$ {v:,.0f}" if v > 0 else "" for v in gasto_ate_limite],
-			textposition="inside",
-			insidetextanchor="middle",
-			textfont={"color": "#fff", "size": 12},
-			hovertemplate="<b>%{y}</b><br>Gasto até limite: <b>R$ %{x:,.0f}</b><br>Limite: R$ %{customdata[0]:,.0f}<br>Empenho: R$ %{customdata[1]:,.0f}",
-			customdata=list(zip(limite_periodo, empenho)),
-		)
-	)
-	# Vermelho: excesso
-	fig.add_trace(
-		go.Bar(
-			y=data["secretaria"],
-			x=excesso,
-			orientation="h",
-			name="Excesso sobre limite",
-			marker_color="#ef4444",
-			opacity=0.95,
-			text=[f"R$ {v:,.0f}" if v > 0 else "" for v in excesso],
-			textposition="inside",
-			insidetextanchor="middle",
-			textfont={"color": "#fff", "size": 12},
-			hovertemplate="<b>%{y}</b><br>Excesso: <b>R$ %{x:,.0f}</b><br>Limite: R$ %{customdata[0]:,.0f}<br>Empenho: R$ %{customdata[1]:,.0f}",
-			customdata=list(zip(limite_periodo, empenho)),
-		)
-	)
-	# Cinza: saldo do empenho
-	fig.add_trace(
-		go.Bar(
-			y=data["secretaria"],
-			x=saldo,
-			orientation="h",
-			name="Saldo do empenho",
-			marker_color="#94a3b8",
-			opacity=0.85,
-			text=[f"R$ {v:,.0f}" if v > 0 else "" for v in saldo],
-			textposition="inside",
-			insidetextanchor="middle",
-			textfont={"color": "#222", "size": 12},
-			hovertemplate="<b>%{y}</b><br>Saldo do empenho: <b>R$ %{x:,.0f}</b><br>Empenho: R$ %{customdata[0]:,.0f}",
-			customdata=list(zip(empenho)),
-		)
-	)
 
 	# Adicionar linha de referência do limite para cada secretaria
 	for idx, (sec, lim, gasto) in enumerate(zip(data["secretaria"], limite_periodo, gasto)):
@@ -720,10 +578,6 @@ def inject_style() -> None:
 			flex-direction: column;
 			align-items: flex-start;
 			justify-content: center;
-			white-space: nowrap;
-			overflow: hidden;
-			text-overflow: ellipsis;
-		}
 			white-space: nowrap;
 			overflow: hidden;
 			text-overflow: ellipsis;
