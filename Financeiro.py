@@ -1,5 +1,148 @@
 import pandas as pd
 import plotly.graph_objects as go
+
+def make_bar_gasto_por_mes_unificado(df_filtered: pd.DataFrame) -> go.Figure:
+	"""
+	Gráfico mensal sem duplicidade de meses, com labels corrigidos e dados agregados.
+	"""
+	value_mix, monthly_totals = build_monthly_mix(df_filtered)
+	fig = go.Figure()
+	if value_mix.empty or monthly_totals.empty:
+		fig.update_layout(template="plotly_dark", title="Consumo por mês sem dados")
+		return apply_plotly_theme(fig)
+
+	# Corrigir nome do mês para 'março' com cedilha
+	def corrige_mes_nome(periodo):
+		partes = periodo.split('/')
+		if len(partes) == 2 and partes[0].strip().lower() == 'marco':
+			return 'Março/' + partes[1]
+		return periodo
+
+	# Corrigir todos os labels e agregar valores por mês/ano único
+	monthly_totals["periodo_corrigido"] = monthly_totals["periodo"].apply(corrige_mes_nome)
+	agrupado = monthly_totals.groupby(["ano", "mes", "periodo_corrigido"], as_index=False).agg({
+		"valor_total_mes": "sum",
+		"litros_total_mes": "sum",
+		"variacao_pct": "first"
+	})
+
+	# Calcular meta mensal
+	from pathlib import Path
+	import json
+	config_path = Path(__file__).resolve().parent / "config.json"
+	with config_path.open("r", encoding="utf-8") as f:
+		config = json.load(f)
+	valor_empenhado = sum(float(sec.get("empenho_2026", 0.0)) for sec in config.get("secretarias", []))
+	meta_mensal = valor_empenhado / 12 if valor_empenhado else 0
+
+	agrupado["azul"] = agrupado["valor_total_mes"].clip(upper=meta_mensal)
+	agrupado["vermelho"] = (agrupado["valor_total_mes"] - meta_mensal).clip(lower=0)
+	customdata = list(
+		zip(
+			agrupado["variacao_pct"],
+			agrupado["litros_total_mes"],
+			[meta_mensal]*len(agrupado),
+			agrupado["vermelho"],
+		)
+	)
+	def hover_excedente_str(excedente):
+		if excedente > 0:
+			return f"Excedeu: {excedente:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+		return ""
+
+	# Barras azul
+	fig.add_trace(
+		go.Bar(
+			x=agrupado["periodo_corrigido"],
+			y=agrupado["azul"],
+			name="Consumo até a meta",
+			marker={"color": "#2563eb", "line": {"color": "#102a56", "width": 1.5}},
+			text=None,
+			customdata=[
+				(
+					v[0], v[1], v[2], hover_excedente_str(v[3])
+				) for v in customdata
+			],
+			hovertemplate=(
+				"<b>%{x}</b><br>"
+				"Variação mensal: %{customdata[0]:+.2f}%<br>"
+				"Litros: %{customdata[1]:,.0f}<br>"
+				"Meta mensal: R$ %{customdata[2]:,.2f}" +
+				"<br>%{customdata[3]}" +
+				"<extra></extra>"
+			),
+		)
+	)
+	# Barras vermelha
+	fig.add_trace(
+		go.Bar(
+			x=agrupado["periodo_corrigido"],
+			y=agrupado["vermelho"],
+			name="Excesso sobre a meta",
+			marker={"color": "#e63946", "line": {"color": "#102a56", "width": 1.5}},
+			text=None,
+			showlegend=True,
+			customdata=customdata,
+			hovertemplate=(
+				"<b>%{x}</b><br>"
+				"Excedeu: %{y:,.2f}<br>"
+				"Variação mensal: %{customdata[0]:+.2f}%<br>"
+				"Litros: %{customdata[1]:,.0f}<br>"
+				"Meta mensal: R$ %{customdata[2]:,.2f}<extra></extra>"
+			),
+		)
+	)
+	# Valor total no topo da barra
+	total_bar = agrupado["azul"] + agrupado["vermelho"]
+	fig.add_trace(
+		go.Scatter(
+			x=agrupado["periodo_corrigido"],
+			y=total_bar,
+			mode="text",
+			text=[f"R$ {t:,.2f}" for t in total_bar],
+			textposition="top center",
+			showlegend=False,
+			textfont={"size": 12, "color": "#fff", "family": "'Space Grotesk', sans-serif"},
+			hoverinfo="skip",
+			texttemplate="<span style='text-shadow: -2px -2px 0 #222, 2px -2px 0 #222, -2px 2px 0 #222, 2px 2px 0 #222;'>%{text}</span>",
+		)
+	)
+	# Linha limite mensal
+	limite_mensal = meta_mensal
+	if limite_mensal > 0:
+		fig.add_shape(
+			type="line",
+			x0=-0.5,
+			x1=len(agrupado["periodo_corrigido"]) - 0.5,
+			y0=limite_mensal,
+			y1=limite_mensal,
+			line=dict(color="#eab308", width=3, dash="dash"),
+			xref="x",
+			yref="y",
+			layer="above"
+		)
+		fig.add_trace(
+			go.Scatter(
+				x=[None],
+				y=[None],
+				mode="lines",
+				line=dict(color="#eab308", width=3, dash="dash"),
+				name="Limite mensal"
+			)
+		)
+	fig.update_layout(
+		template="plotly_dark",
+		title="Consumo Combustível por mês",
+		xaxis_title="Período",
+		yaxis_title="Valor faturado",
+		margin={"l": 30, "r": 30, "t": 110, "b": 30},
+		bargap=0.45,
+		barmode="stack",
+		legend={"orientation": "h", "x": 0.01, "y": 1.02, "xanchor": "left", "yanchor": "bottom"},
+	)
+	return apply_plotly_theme(fig)
+import pandas as pd
+import plotly.graph_objects as go
 from make_bar_consumo_secretaria import make_bar_consumo_secretaria
 
 def make_bar_consumo_tipo_mes(df_filtered: pd.DataFrame) -> go.Figure:
@@ -674,50 +817,124 @@ def make_bar_gasto_por_mes(df_filtered: pd.DataFrame) -> go.Figure:
 		fig.update_layout(template="plotly_dark", title="Consumo por mês sem dados")
 		return apply_plotly_theme(fig)
 
-	# Barras: azul até a média, vermelho para o excesso sobre a média
+	# Barras: azul até a meta, vermelho para o excesso sobre a meta
+	# Calcular o limite mensal (valor empenhado / 12)
+	from pathlib import Path
+	import json
+	config_path = Path(__file__).resolve().parent / "config.json"
+	with config_path.open("r", encoding="utf-8") as f:
+		config = json.load(f)
+	valor_empenhado = sum(float(sec.get("empenho_2026", 0.0)) for sec in config.get("secretarias", []))
+	meta_mensal = valor_empenhado / 12 if valor_empenhado else 0
+
 	azul = []
 	vermelho = []
-	media = monthly_totals["media_valor"]
-	for v, m in zip(monthly_totals["valor_total_mes"], media):
-		azul.append(min(v, m))
-		vermelho.append(max(0, v - m))
+	for v in monthly_totals["valor_total_mes"]:
+		azul.append(min(v, meta_mensal))
+		vermelho.append(max(0, v - meta_mensal))
 
 	bar_text = [f"R$ {value:,.2f}" for value in monthly_totals["valor_total_mes"]]
-
-	# Valor total para cada barra (azul+vermelho)
 	total_bar = [a + v for a, v in zip(azul, vermelho)]
+
+	# Corrigir nome do mês para 'março' com cedilha
+	def corrige_mes_nome(periodo):
+		partes = periodo.split('/')
+		if len(partes) == 2 and partes[0].strip().lower() == 'marco':
+			return 'Março/' + partes[1]
+		return periodo
+
+	# Corrigir todos os labels e agregar valores por mês/ano único
+	monthly_totals["periodo_corrigido"] = monthly_totals["periodo"].apply(corrige_mes_nome)
+	agrupado = monthly_totals.groupby(["ano", "mes", "periodo_corrigido"], as_index=False).agg({
+		"valor_total_mes": "sum",
+		"litros_total_mes": "sum",
+		"variacao_pct": "first"  # ou média, se preferir
+	})
+	# Recalcular azul/vermelho após agregação
+	agrupado["azul"] = agrupado["valor_total_mes"].clip(upper=meta_mensal)
+	agrupado["vermelho"] = (agrupado["valor_total_mes"] - meta_mensal).clip(lower=0)
+	# Customdata: variacao, litros, meta, excesso
+	customdata = list(
+		zip(
+			agrupado["variacao_pct"],
+			agrupado["litros_total_mes"],
+			[meta_mensal]*len(agrupado),
+			agrupado["vermelho"],
+		)
+	)
+	def hover_azul_template():
+		return (
+			"<b>%{x}</b><br>"
+			"Variação mensal: %{customdata[0]:+.2f}%<br>"
+			"Litros: %{customdata[1]:,.0f}<br>"
+			"Meta mensal: R$ %{customdata[2]:,.2f}" +
+			"<br>%{customdata[3]|excedente}" +
+			"<extra></extra>"
+		)
+
+	def hover_vermelho_template():
+		return (
+			"<b>%{x}</b><br>"
+			"Excedeu: %{y:,.2f}<br>"
+			"Variação mensal: %{customdata[0]:+.2f}%<br>"
+			"Litros: %{customdata[1]:,.0f}<br>"
+			"Meta mensal: R$ %{customdata[2]:,.2f}<extra></extra>"
+		)
+
+	# Função para formatar o valor excedente no hover azul
+	def hover_excedente_str(excedente):
+		if excedente > 0:
+			return f"Excedeu: {excedente:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+		return ""
+
+	# Adiciona trace azul
+	x_labels = [corrige_mes_nome(p) for p in monthly_totals["periodo"]]
+	# Remover duplicidades mantendo ordem
+	seen = set()
+	x_labels_unique = []
+	for label in x_labels:
+		if label not in seen:
+			x_labels_unique.append(label)
+			seen.add(label)
 
 	fig.add_trace(
 		go.Bar(
-			x=monthly_totals["periodo"],
-			y=azul,
-			name="Consumo até média",
+			x=agrupado["periodo_corrigido"],
+			y=agrupado["azul"],
+			name="Consumo até a meta",
 			marker={"color": "#2563eb", "line": {"color": "#102a56", "width": 1.5}},
 			text=None,
-			customdata=list(
-				zip(
-					monthly_totals["variacao_pct"],
-					monthly_totals["litros_total_mes"],
-					monthly_totals["media_valor"],
-				)
-			),
+			customdata=[
+				(
+					v[0], v[1], v[2], hover_excedente_str(v[3])
+				) for v in customdata
+			],
 			hovertemplate=(
-				"Período: %{x}<br>"
-				+ "Consumo: R$ %{y:,.2f}<br>"
-				+ "Variação vs mês anterior: %{customdata[0]:+.1f}%<br>"
-				+ "Litros: %{customdata[1]:,.0f}<br>"
-				+ "Média mensal: R$ %{customdata[2]:,.2f}<extra></extra>"
+				"<b>%{x}</b><br>"
+				"Variação mensal: %{customdata[0]:+.2f}%<br>"
+				"Litros: %{customdata[1]:,.0f}<br>"
+				"Meta mensal: R$ %{customdata[2]:,.2f}" +
+				"<br>%{customdata[3]}" +
+				"<extra></extra>"
 			),
 		)
 	)
 	fig.add_trace(
 		go.Bar(
-			x=monthly_totals["periodo"],
-			y=vermelho,
-			name="Excesso sobre média",
+			x=agrupado["periodo_corrigido"],
+			y=agrupado["vermelho"],
+			name="Excesso sobre a meta",
 			marker={"color": "#e63946", "line": {"color": "#102a56", "width": 1.5}},
 			text=None,
 			showlegend=True,
+			customdata=customdata,
+			hovertemplate=(
+				"<b>%{x}</b><br>"
+				"Excedeu: %{y:,.2f}<br>"
+				"Variação mensal: %{customdata[0]:+.2f}%<br>"
+				"Litros: %{customdata[1]:,.0f}<br>"
+				"Meta mensal: R$ %{customdata[2]:,.2f}<extra></extra>"
+			),
 		)
 	)
 	# Adiciona o valor total no topo da barra empilhada
@@ -734,12 +951,61 @@ def make_bar_gasto_por_mes(df_filtered: pd.DataFrame) -> go.Figure:
 			texttemplate="<span style='text-shadow: -2px -2px 0 #222, 2px -2px 0 #222, -2px 2px 0 #222, 2px 2px 0 #222;'>%{text}</span>",
 		)
 	)
+	# Calcular o limite mensal (valor empenhado / 12)
+	from pathlib import Path
+	import json
+	config_path = Path(__file__).resolve().parent / "config.json"
+	with config_path.open("r", encoding="utf-8") as f:
+		config = json.load(f)
+	valor_empenhado = sum(float(sec.get("empenho_2026", 0.0)) for sec in config.get("secretarias", []))
+	limite_mensal = valor_empenhado / 12 if valor_empenhado else 0
+
+	# Adiciona linha tracejada horizontal do limite
+	if limite_mensal > 0:
+		fig.add_shape(
+			type="line",
+			x0=-0.5,
+			x1=len(monthly_totals["periodo"]) - 0.5,
+			y0=limite_mensal,
+			y1=limite_mensal,
+			line=dict(color="#eab308", width=3, dash="dash"),
+			xref="x",
+			yref="y",
+			layer="above"
+		)
+		# Adiciona uma scatter invisível para a legenda
+		fig.add_trace(
+			go.Scatter(
+				x=[None],
+				y=[None],
+				mode="lines",
+				line=dict(color="#eab308", width=3, dash="dash"),
+				name="Limite mensal"
+			)
+		)
+		# Adiciona o valor do limite mensal centralizado acima da linha
+		x_centro = (len(monthly_totals["periodo"]) - 1) / 2
+		fig.add_annotation(
+			x=x_centro,
+			y=limite_mensal,
+			text=f"R$ {limite_mensal:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+			showarrow=False,
+			font=dict(size=14, color="#eab308", family="'Space Grotesk', sans-serif"),
+			align="center",
+			bgcolor="rgba(16,25,38,0.95)",
+			bordercolor="#eab308",
+			borderwidth=1,
+			borderpad=4,
+			xanchor="center",
+			yanchor="bottom",
+		)
+
 	fig.update_layout(
 		template="plotly_dark",
 		title="Consumo Combustível por mês",
 		xaxis_title="Período",
 		yaxis_title="Valor faturado",
-		margin={"l": 30, "r": 30, "t": 72, "b": 30},
+		margin={"l": 30, "r": 30, "t": 110, "b": 30},  # aumenta o topo para dar espaço
 		bargap=0.45,
 		barmode="stack",
 		legend={"orientation": "h", "x": 0.01, "y": 1.02, "xanchor": "left", "yanchor": "bottom"},
@@ -1274,40 +1540,69 @@ def inject_style() -> None:
 		}
 
 		.kpi-grid {
-			display: grid;
-			grid-template-columns: repeat(4, minmax(0, 1fr));
+			display: flex;
+			flex-direction: row;
 			gap: 12px;
 			margin-bottom: 8px;
+			justify-content: space-between;
+			flex-wrap: nowrap;
+			max-width: 100vw;
 		}
 
 		.kpi-card {
 			background: linear-gradient(150deg, #162436 0%, #111d2b 100%);
 			border: 1px solid rgba(142,163,190,0.22);
-			border-radius: 14px;
-			padding: 14px 16px;
-			box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
+			border-radius: 12px;
+			padding: 10px 18px 10px 18px;
+			box-shadow: 0 6px 16px rgba(0, 0, 0, 0.22);
+			min-width: 210px;
+			max-width: 260px;
+			display: flex;
+			flex-direction: column;
+			align-items: flex-start;
+			justify-content: center;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+		}
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
 		}
 
 		.kpi-label {
-			font-size: 0.78rem;
+			font-size: 1rem;
 			color: #8ea3be;
 			letter-spacing: 0.04em;
 			margin-bottom: 2px;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
 		}
 
 		.kpi-value {
 			font-family: 'Rajdhani', sans-serif;
-			font-size: 2.0rem;
-			line-height: 1.05;
+			font-size: 1.35rem;
+			line-height: 1.1;
 			font-weight: 700;
 			color: #e7eef8;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
 		}
 
 		.section-title {
-			font-size: 1rem;
+			font-size: 1.35rem;
 			font-weight: 700;
 			margin: 0.45rem 0 0.25rem 0;
 			color: #d9e3f0;
+		}
+
+		.js-plotly-plot .gtitle, .js-plotly-plot .gtitle-main, .js-plotly-plot .gtitle-txt {
+			font-size: 1.35rem !important;
+			font-family: 'Space Grotesk', 'Rajdhani', sans-serif !important;
+			font-weight: 700 !important;
+			color: #e7eef8 !important;
 		}
 
 		div[data-testid="stDataFrame"] {
@@ -1373,9 +1668,12 @@ def get_real_df(cache_version: str = "v2_valor_unitario") -> pd.DataFrame:
 	return load_sqlite(DB_PATH)
 
 
+
+
 def run_dashboard() -> None:
 	st.set_page_config(page_title="Painel de Abastecimento", page_icon="⛽", layout="wide", initial_sidebar_state="expanded")
 	inject_style()
+	# monthly_scope só pode ser usado após ser definido
 
 	df_limits = get_limits_df()
 	discount_rate = get_discount_rate()
@@ -1420,7 +1718,7 @@ def run_dashboard() -> None:
 		f"Valores monetarios exibidos com desconto contratual de {discount_rate * 100:.2f}% aplicado sobre o valor bruto do abastecimento."
 	)
 	monthly_scope = apply_filters(df_real, selected_ano, selected_mes, selected_secretaria, "Todos")
-	st.plotly_chart(make_bar_gasto_por_mes(monthly_scope), use_container_width=True, key="bar_gasto_mes")
+	st.plotly_chart(make_bar_gasto_por_mes_unificado(monthly_scope), use_container_width=True, key="bar_gasto_mes_unificado")
 	st.plotly_chart(make_bar_consumo_tipo_mes(filtered), use_container_width=True, key="bar_combustivel")
 	line_col, donut_col = st.columns([2, 1])
 	line_col.plotly_chart(make_line_custo_medio_mes_combustivel(filtered), use_container_width=True, key="line_custo_medio_mes_combustivel")
