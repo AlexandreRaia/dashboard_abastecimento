@@ -141,7 +141,7 @@ def make_bar_gasto_por_mes_unificado(
 			x=agrupado["periodo_corrigido"],
 			y=total_bar,
 			mode="text",
-			text=[f"R$ {t:,.2f}" for t in total_bar],
+			text=[currency(t) for t in total_bar],
 			textposition="top center",
 			showlegend=False,
 			textfont={"size": 12, "color": "#fff", "family": "'Space Grotesk', sans-serif"},
@@ -201,7 +201,7 @@ def make_bar_gasto_por_ano(df: pd.DataFrame, selected_secretaria: str = "Todas",
         x=grupo["ano"].astype(str),
         y=grupo["valor_total"],
         marker_color=["#2563eb" if int(a)==2026 else "#38bdf8" for a in grupo["ano"]],
-        text=[f"R$ {v:,.2f}" for v in grupo["valor_total"]],
+        text=[currency(v) for v in grupo["valor_total"]],
         textposition="outside",
         textfont={"size": 16, "color": "#fff", "family": "'Space Grotesk', sans-serif"},
         name="Gasto anual"
@@ -553,6 +553,10 @@ def inject_style() -> None:
 
 
 def render_kpi_cards(kpis: dict[str, float | str]) -> None:
+		def _fmt_num(v, dec=0):
+			fmt = f"{v:,.{dec}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+			return fmt
+
 		html = f"""
 		<div class="kpi-grid">
 			<div class="kpi-card">
@@ -574,6 +578,28 @@ def render_kpi_cards(kpis: dict[str, float | str]) -> None:
 			<div class="kpi-card">
 				<div class="kpi-label">Meses de Cobertura</div>
 				<div class="kpi-value">{kpis['cobertura']:.1f}</div>
+			</div>
+		</div>
+		<div class="kpi-grid" style="margin-top:8px;">
+			<div class="kpi-card">
+				<div class="kpi-label">Total de Litros</div>
+				<div class="kpi-value">{_fmt_num(kpis['gasto_litros'], 2)} L</div>
+			</div>
+			<div class="kpi-card">
+				<div class="kpi-label">Consumo Médio</div>
+				<div class="kpi-value">{_fmt_num(kpis['consumo_medio'], 2)} km/L</div>
+			</div>
+			<div class="kpi-card">
+				<div class="kpi-label">Custo Médio (R$/km)</div>
+				<div class="kpi-value">{currency(kpis['custo_por_km'])}</div>
+			</div>
+			<div class="kpi-card">
+				<div class="kpi-label">Nº Abastecimentos</div>
+				<div class="kpi-value">{_fmt_num(kpis['n_abastecimentos'])}</div>
+			</div>
+			<div class="kpi-card">
+				<div class="kpi-label">Veículos Ativos</div>
+				<div class="kpi-value">{kpis['veiculos_ativos']}</div>
 			</div>
 		</div>
 		"""
@@ -801,6 +827,11 @@ def build_kpis(
     gasto_bruto_total = float(df_filtered["valor_bruto"].sum()) if "valor_bruto" in df_filtered.columns else gasto_total
     desconto_total = float(df_filtered["desconto_valor"].sum()) if "desconto_valor" in df_filtered.columns else 0.0
     gasto_litros = float(df_filtered["litros"].sum())
+    km_total = float(df_filtered["km_rodado"].sum()) if "km_rodado" in df_filtered.columns else 0.0
+    consumo_medio = float(df_filtered["km_por_litro"].mean()) if "km_por_litro" in df_filtered.columns and df_filtered["km_por_litro"].notna().any() else 0.0
+    custo_por_km = float(df_filtered["custo_por_km"].mean()) if "custo_por_km" in df_filtered.columns and df_filtered["custo_por_km"].notna().any() else 0.0
+    n_abastecimentos = len(df_filtered)
+    veiculos_ativos = df_filtered["placa"].nunique() if "placa" in df_filtered.columns else 0
 
     limite_total_periodo = float(status_df["limite_valor_periodo"].sum()) if "limite_valor_periodo" in status_df.columns else 0.0
 
@@ -822,6 +853,12 @@ def build_kpis(
         "label_saldo_empenho": "Saldo Total",
         "media_mensal_consumo": gasto_medio_mensal,
         "cobertura": cobertura,
+        # operacionais
+        "km_total": km_total,
+        "consumo_medio": consumo_medio,
+        "custo_por_km": custo_por_km,
+        "n_abastecimentos": n_abastecimentos,
+        "veiculos_ativos": veiculos_ativos,
     }
 
 
@@ -866,7 +903,7 @@ def make_bar_consumo_tipo_mes(df_filtered: pd.DataFrame) -> go.Figure:
                 y=dados["valor_total"],
                 name=fuel.title(),
                 marker_color=color_map[fuel],
-                text=[f"R$ {v:,.2f}" for v in dados["valor_total"]],
+                text=[currency(v) for v in dados["valor_total"]],
                 textposition="outside",
                 offsetgroup=fuel,
                 legendgroup=fuel,
@@ -1098,7 +1135,10 @@ def make_bar_litros_vs_limite_secretaria(df_filtered: pd.DataFrame, df_limits: p
         x=consumed_pct,
         orientation="h",
         marker_color=colors,
-        text=[f"{p:.0f}% ({v:,.0f} L / {l:,.0f} L)" for p, v, l in zip(merged["pct"], merged["litros"], merged["limite"])],
+        text=[
+            f"{p:.0f}% ({v:,.0f} L / {l:,.0f} L)".replace(",", ".")
+            for p, v, l in zip(merged["pct"], merged["litros"], merged["limite"])
+        ],
         textposition="outside",
         textfont={"size": 12, "color": "#eaf2ff"},
         customdata=list(zip(merged["litros"], merged["limite"], merged["pct"])),

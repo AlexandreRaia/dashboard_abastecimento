@@ -135,13 +135,13 @@ def make_bar_consumo_secretaria(df: pd.DataFrame, df_limits: pd.DataFrame) -> go
     fig.update_layout(
         barmode="stack",
         template="plotly_dark",
-        title={"text": "Ranking de Consumo por Secretaria — % do limite e saldo", "x": 0.01, "y": 0.98},
-        margin={"l": 20, "r": 100, "t": 80, "b": 30},
+        title="Ranking de Consumo por Secretaria — % do limite e saldo",
+        margin={"l": 20, "r": 100, "t": 48, "b": 60},
         bargap=0.25,
         height=max(560, 38 * len(consumo)),
         legend={
-            "orientation": "h", "x": 0.01, "y": 1.06,
-            "xanchor": "left", "yanchor": "bottom",
+            "orientation": "h", "x": 0.5, "y": -0.06,
+            "xanchor": "center", "yanchor": "top",
             "font": {"size": 13, "color": "#eaf2ff"},
             "bgcolor": "rgba(0,0,0,0)",
         },
@@ -285,22 +285,18 @@ def make_bar_consumo_secretaria(df: pd.DataFrame, df_limits: pd.DataFrame) -> go
     fig.update_layout(
         barmode="stack",
         template="plotly_dark",
-        title={
-            "text": "Ranking de Consumo por Secretaria (até limite, excesso e saldo)",
-            "x": 0.01,
-            "y": 0.98
-        },
-        margin={"l": 120, "r": 40, "t": 130, "b": 30},  # Aumenta o topo para dar espaço
+        title="Ranking de Consumo por Secretaria (R$)",
+        margin={"l": 120, "r": 40, "t": 48, "b": 30},
         yaxis={"categoryorder": "total ascending"},
         bargap=0.25,
         height=max(600, 40 * len(consumo)),
         legend=dict(
             orientation="h",
-            x=0.01,
-            y=1.08,
-            xanchor="left",
-            yanchor="bottom",
-            font=dict(size=14, color="#eaf2ff"),
+            x=0.5,
+            y=-0.06,
+            xanchor="center",
+            yanchor="top",
+            font=dict(size=13, color="#eaf2ff"),
             bgcolor="rgba(0,0,0,0)"
         ),
     )
