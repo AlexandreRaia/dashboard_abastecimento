@@ -181,10 +181,10 @@ def make_bar_gasto_por_mes_unificado(
 		title="Consumo Combustível por mês",
 		xaxis_title="Período",
 		yaxis_title="Valor faturado",
-		margin={"l": 30, "r": 30, "t": 110, "b": 30},  # aumenta o topo para dar espaço
+		margin={"l": 30, "r": 30, "t": 48, "b": 60},
 		bargap=0.45,
 		barmode="stack",
-		legend={"orientation": "h", "x": 0.01, "y": 1.02, "xanchor": "left", "yanchor": "bottom"},
+		legend={"orientation": "h", "x": 0.5, "y": -0.18, "xanchor": "center", "yanchor": "top"},
 	)
 	return apply_plotly_theme(fig)
 
@@ -208,11 +208,11 @@ def make_bar_gasto_por_ano(df: pd.DataFrame, selected_secretaria: str = "Todas",
     ))
     fig.update_layout(
         template="plotly_dark",
-        title={"text": "Gasto anual comparativo", "font": {"size": 20, "color": "#eaf2ff"}},
+        title="Gasto anual comparativo",
         xaxis_title="Ano",
         yaxis_title="Valor total (R$)",
-        margin={"l": 20, "r": 20, "t": 60, "b": 30},
-        legend={"font": {"size": 14, "color": "#eaf2ff"}},
+        margin={"l": 20, "r": 20, "t": 48, "b": 30},
+        legend={"font": {"size": 13, "color": "#eaf2ff"}},
     )
     return apply_plotly_theme(fig)
 
@@ -448,10 +448,14 @@ def inject_style() -> None:
 		}
 
 		.section-title {
-			font-size: 1.35rem;
+			font-family: 'Rajdhani', 'Space Grotesk', sans-serif;
+			font-size: 1.5rem;
 			font-weight: 700;
-			margin: 0.45rem 0 0.25rem 0;
-			color: #d9e3f0;
+			letter-spacing: 0.02em;
+			margin: 1.1rem 0 0.15rem 0;
+			padding-bottom: 0.3rem;
+			border-bottom: 1px solid rgba(56,189,248,0.18);
+			color: #e7eef8;
 		}
 
 		.js-plotly-plot .gtitle, .js-plotly-plot .gtitle-main, .js-plotly-plot .gtitle-txt {
@@ -891,10 +895,11 @@ def make_bar_consumo_tipo_mes(df_filtered: pd.DataFrame) -> go.Figure:
     )
     fig = apply_plotly_theme(fig)
     fig.update_layout(
-        title={"text": "Consumo de combustível por mês e tipo", "x": 0.01, "y": 0.98, "font": {"size": 22}},
-        legend={"font": {"size": 16, "color": "#eaf2ff"}, "orientation": "h", "x": 0.01, "y": 1.04, "xanchor": "left", "yanchor": "bottom"},
-        xaxis={"tickfont": {"size": 15}},
-        yaxis={"tickfont": {"size": 14}},
+        title="Consumo de combustível por mês e tipo (R$)",
+        legend={"font": {"size": 13, "color": "#eaf2ff"}, "orientation": "h", "x": 0.5, "y": -0.18, "xanchor": "center", "yanchor": "top"},
+        xaxis={"tickfont": {"size": 13}},
+        yaxis={"tickfont": {"size": 13}},
+        margin={"l": 20, "r": 20, "t": 48, "b": 60},
     )
     return fig
 
@@ -947,20 +952,20 @@ def make_ranking_consumo_secretaria(status_df: pd.DataFrame) -> go.Figure:
     fig.update_layout(
         barmode="stack",
         template="plotly_dark",
+        title="Ranking de Consumo por Secretaria (R$)",
         xaxis_title="R$",
         xaxis={"range": [0, max_val * 1.02]},
-        margin={"l": 20, "r": 20, "t": 60, "b": 30},
+        margin={"l": 20, "r": 20, "t": 48, "b": 60},
         height=max(480, 42 * len(df)),
         bargap=0.25,
         legend={
-            "orientation": "h", "x": 0.01, "y": 1.04,
-            "xanchor": "left", "yanchor": "bottom",
+            "orientation": "h", "x": 0.5, "y": -0.08,
+            "xanchor": "center", "yanchor": "top",
             "font": {"size": 13, "color": "#eaf2ff"},
             "bgcolor": "rgba(0,0,0,0)",
         },
     )
     fig = apply_plotly_theme(fig)
-    fig.update_layout(title={"text": "Ranking de Consumo por Secretaria (R$)", "x": 0.01, "y": 0.99, "font": {"size": 20}})
     return fig
 
 
@@ -999,11 +1004,11 @@ def make_bar_valor_vs_limite_secretaria(status_df: pd.DataFrame) -> go.Figure:
     colors = [bar_color(p) for p in df["pct"]]
     pct_clip = df["pct"].clip(upper=200)
 
-    def bar_label(p, v, l, dev):
+    # Label curto: só o % (com ⚠ se excedido). Detalhes ficam no hover.
+    def bar_label(p):
         if p > 100:
-            return f"{p:.0f}%  ⚠ +R$ {dev:,.0f} acima do limite"
-        saldo = l - v
-        return f"{p:.0f}%  (R$ {v:,.0f} / R$ {l:,.0f}  · saldo R$ {saldo:,.0f})"
+            return f"⚠ {p:.0f}%"
+        return f"{p:.0f}%"
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
@@ -1011,37 +1016,34 @@ def make_bar_valor_vs_limite_secretaria(status_df: pd.DataFrame) -> go.Figure:
         x=pct_clip,
         orientation="h",
         marker_color=colors,
-        text=[
-            bar_label(p, v, l, dev)
-            for p, v, l, dev in zip(df["pct"], df["gasto_valor"], df["limite_valor_periodo"], df["desvio_valor"])
-        ],
+        text=[bar_label(p) for p in df["pct"]],
         textposition="outside",
         textfont={"size": 12, "color": "#eaf2ff"},
         customdata=list(zip(df["gasto_valor"], df["limite_valor_periodo"], df["pct"], df["desvio_valor"])),
         hovertemplate=(
             "<b>%{y}</b><br>"
-            "Gasto acumulado: R$ %{customdata[0]:,.2f}<br>"
-            "Limite acumulado: R$ %{customdata[1]:,.2f}<br>"
+            "Gasto: R$ %{customdata[0]:,.2f}<br>"
+            "Limite: R$ %{customdata[1]:,.2f}<br>"
             f"  (limite mensal × {months_label})<br>"
             "Uso: %{customdata[2]:.1f}%<br>"
-            "<b>Excesso: R$ %{customdata[3]:,.2f}</b><extra></extra>"
+            "Saldo / Excesso: R$ %{customdata[3]:,.2f}<extra></extra>"
         ),
         showlegend=False,
     ))
     fig.add_vline(x=100, line_dash="dash", line_color="#eab308", line_width=2)
 
     max_pct = max(df["pct"].max(), 100)
-    x_range_max = max_pct * 1.45  # espaço suficiente para o label
+    x_range_max = max_pct * 1.18  # margem só para o label curto caber
 
     fig.update_layout(
         template="plotly_dark",
         xaxis_title="% do limite consumido",
         xaxis={"range": [0, x_range_max], "ticksuffix": "%"},
-        margin={"l": 20, "r": 20, "t": 60, "b": 30},
+        title="Gasto em R$ vs. limite por secretaria",
+        margin={"l": 20, "r": 20, "t": 48, "b": 30},
         height=max(400, 30 * len(df)),
     )
     fig = apply_plotly_theme(fig)
-    fig.update_layout(title={"text": "Gasto em R$ vs. limite por secretaria", "x": 0.01, "y": 0.99, "font": {"size": 20}})
     return fig
 
 
@@ -1109,11 +1111,11 @@ def make_bar_litros_vs_limite_secretaria(df_filtered: pd.DataFrame, df_limits: p
         template="plotly_dark",
         xaxis_title="% do limite consumido",
         xaxis={"range": [0, 155], "ticksuffix": "%"},
-        margin={"l": 20, "r": 60, "t": 60, "b": 30},
+        title="Consumo de litros vs. limite por secretaria",
+        margin={"l": 20, "r": 60, "t": 48, "b": 30},
         height=max(400, 28 * len(merged)),
     )
     fig = apply_plotly_theme(fig)
-    fig.update_layout(title={"text": "Consumo de litros vs. limite por secretaria", "x": 0.01, "y": 0.99, "font": {"size": 20}})
     return fig
 
 
@@ -1184,7 +1186,8 @@ def make_bar_consumo_tipo_mes_litros(df_filtered: pd.DataFrame) -> go.Figure:
         },
     )
     fig = apply_plotly_theme(fig)
-    fig.update_layout(title={"text": "Consumo de combustível por mês e tipo (Litros)", "x": 0.01, "y": 0.98, "font": {"size": 22}})
+    fig.update_layout(title="Consumo de combustível por mês e tipo (Litros)", margin={"l": 20, "r": 20, "t": 48, "b": 60},
+        legend={"font": {"size": 13, "color": "#eaf2ff"}, "orientation": "h", "x": 0.5, "y": -0.18, "xanchor": "center", "yanchor": "top"})
     return fig
 
 
@@ -1223,12 +1226,75 @@ def make_line_custo_medio_mes_combustivel(df_filtered: pd.DataFrame) -> go.Figur
         template="plotly_dark",
         xaxis_title="Mês",
         yaxis_title="Volume (Litros)",
-        margin={"l": 30, "r": 30, "t": 60, "b": 30},
-        legend={"font": {"size": 16, "color": "#eaf2ff"}},
+        title="Consumo por combustível por mês (Litros)",
+        margin={"l": 30, "r": 30, "t": 48, "b": 30},
+        legend={"font": {"size": 13, "color": "#eaf2ff"}},
     )
     fig = apply_plotly_theme(fig)
-    fig.update_layout(title={"text": "Consumo por combustível por mês (Litros)", "x": 0.01, "y": 0.98, "font": {"size": 22}})
     return fig
+
+
+def make_line_custo_medio_rl_combustivel(df_filtered: pd.DataFrame) -> go.Figure:
+    """Custo médio (R$/L) por tipo de combustível ao longo dos meses."""
+    if df_filtered.empty or not {"mes", "combustivel", "valor", "litros"}.issubset(df_filtered.columns):
+        fig = go.Figure()
+        fig.update_layout(template="plotly_dark", title="Custo médio R$/L por combustível")
+        return apply_plotly_theme(fig)
+
+    df = df_filtered.copy()
+    grupo = (
+        df.groupby(["mes", "combustivel"], as_index=False)
+        .agg(valor=("valor", "sum"), litros=("litros", "sum"))
+    )
+    grupo = grupo[grupo["litros"] > 0].copy()
+    grupo["custo_medio"] = grupo["valor"] / grupo["litros"]
+    grupo["mes_label"] = grupo["mes"].map(MONTHS)
+    grupo = grupo.sort_values("mes")
+
+    color_map = {
+        "GASOLINA": "#38bdf8",
+        "DIESEL": "#f97316",
+        "DIESEL S10": "#fb923c",
+        "ALCOOL": "#a78bfa",
+        "ETANOL": "#a78bfa",
+    }
+
+    fig = go.Figure()
+    for combustivel in sorted(grupo["combustivel"].unique()):
+        dados = grupo[grupo["combustivel"] == combustivel].sort_values("mes")
+        cor = color_map.get(str(combustivel).upper(), "#94a3b8")
+        fig.add_trace(go.Scatter(
+            x=dados["mes_label"],
+            y=dados["custo_medio"],
+            mode="lines+markers",
+            name=str(combustivel),
+            line={"color": cor, "width": 3},
+            marker={"color": cor, "size": 7},
+            hovertemplate=(
+                "<b>%{x}</b><br>"
+                f"{combustivel}<br>"
+                "Custo médio: R$ %{y:.3f}/L<extra></extra>"
+            ),
+        ))
+    fig.update_layout(
+        template="plotly_dark",
+        title="Custo médio R$/L por combustível",
+        xaxis_title="Mês",
+        yaxis_title="R$/L",
+        yaxis_tickprefix="R$ ",
+        yaxis_tickformat=".2f",
+        margin={"l": 30, "r": 20, "t": 48, "b": 60},
+        legend={
+            "orientation": "h",
+            "x": 0.5,
+            "y": -0.18,
+            "xanchor": "center",
+            "yanchor": "top",
+            "font": {"size": 13, "color": "#eaf2ff"},
+            "bgcolor": "rgba(8, 17, 28, 0.75)",
+        },
+    )
+    return apply_plotly_theme(fig)
 
 
 def make_line_real_previsto_projecao(
@@ -1286,14 +1352,15 @@ def make_line_real_previsto_projecao(
     )
     fig.update_layout(
         template="plotly_dark",
-        title={"text": "Gasto acumulado: Real x Previsto", "x": 0.01, "y": 0.98},
-        margin={"l": 30, "r": 30, "t": 78, "b": 30},
+        title="Gasto acumulado: Real x Previsto",
+        margin={"l": 30, "r": 30, "t": 48, "b": 60},
         legend={
             "orientation": "h",
-            "x": 0.01,
-            "y": 1.03,
-            "yanchor": "bottom",
-            "font": {"size": 18, "color": "#eaf2ff"},
+            "x": 0.5,
+            "y": -0.18,
+            "xanchor": "center",
+            "yanchor": "top",
+            "font": {"size": 13, "color": "#eaf2ff"},
             "bgcolor": "rgba(8, 17, 28, 0.75)",
         },
         xaxis_title="Mês",
@@ -1453,61 +1520,94 @@ def run_dashboard() -> None:
 				help="Selecione o arquivo Relatorio.xlsx exportado do sistema.",
 				key="upload_relatorio",
 			)
-			_last_imported = st.session_state.get("_last_imported_file")
-			if uploaded is not None and uploaded.name != _last_imported:
-				with st.spinner("Importando dados..."):
-					try:
-						import re as _re, io as _io
-						_KNOWN_COLS = {"Placa", "Data/Hora", "Unidade", "Produto", "Qtde (L)", "Valor"}
+			if uploaded is not None:
+				# Identificar arquivo por nome+tamanho (evita reimportar o mesmo)
+				_file_id = f"{uploaded.name}_{uploaded.size}"
+				_imported_ids = st.session_state.get("_imported_ids", set())
+				_force = st.session_state.pop("_force_reimport", False)
 
-						def _sanitize(name):
-							s = name.strip().lower()
-							s = _re.sub(r'\s+', '_', s)
-							s = _re.sub(r'[^a-z0-9_]', '_', s)
-							s = _re.sub(r'_+', '_', s).strip('_')
-							return s or 'sheet'
+				if _file_id not in _imported_ids or _force:
+					with st.spinner("Importando dados..."):
+						try:
+							import re as _re, io as _io
+							_KNOWN_COLS = {"Placa", "Data/Hora", "Unidade", "Produto", "Qtde (L)", "Valor"}
 
-						def _find_header_row(raw_df):
-							"""Encontra a linha que contém os cabeçalhos reais."""
-							for i, row in raw_df.iterrows():
-								row_vals = set(str(v).strip() for v in row.values)
-								if len(_KNOWN_COLS & row_vals) >= 2:
-									return i
-							return None
+							def _sanitize(name):
+								s = name.strip().lower()
+								s = _re.sub(r'\s+', '_', s)
+								s = _re.sub(r'[^a-z0-9_]', '_', s)
+								s = _re.sub(r'_+', '_', s).strip('_')
+								return s or 'sheet'
 
-						_file_bytes = uploaded.read()
-						sheets_raw = pd.read_excel(_io.BytesIO(_file_bytes), sheet_name=None, header=None)
-						single_sheet = len(sheets_raw) == 1
-						used_tables = set()
-						with sqlite3.connect(str(DB_PATH)) as _conn:
-							for sheet_name, raw in sheets_raw.items():
-								base = 'abastecimentos' if single_sheet else _sanitize(sheet_name)
-								tbl = base
-								idx = 1
-								while tbl in used_tables:
-									idx += 1
-									tbl = f"{base}_{idx}"
-								used_tables.add(tbl)
+							def _find_header_row(raw_df):
+								for i, row in raw_df.iterrows():
+									row_vals = set(str(v).strip() for v in row.values)
+									if len(_KNOWN_COLS & row_vals) >= 2:
+										return i
+								return None
 
-								header_row = _find_header_row(raw)
-								if header_row is not None:
-									df_import = pd.read_excel(
-										_io.BytesIO(_file_bytes),
-										sheet_name=sheet_name,
-										header=header_row,
-									)
-								else:
-									df_import = raw
+							def _safe_df(df):
+								"""Converte colunas Timestamp para string antes de salvar no SQLite."""
+								for _c in df.columns:
+									if pd.api.types.is_datetime64_any_dtype(df[_c]):
+										df[_c] = df[_c].astype(str)
+									elif df[_c].dtype == object:
+										df[_c] = df[_c].apply(
+											lambda v: str(v) if hasattr(v, 'isoformat') else v
+										)
+								return df
 
-								df_import.to_sql(tbl, _conn, if_exists='replace', index=False)
-						st.session_state["_last_imported_file"] = uploaded.name
-						st.session_state["db_version"] = st.session_state.get("db_version", 0) + 1
-						for _k in ("sel_ano", "sel_mes", "sel_sec", "sel_comb"):
-							st.session_state.pop(_k, None)
-						st.success(f"✅ {uploaded.name} importado com sucesso! Recarregando...")
+							_file_bytes = uploaded.read()
+							sheets_raw = pd.read_excel(_io.BytesIO(_file_bytes), sheet_name=None, header=None)
+							single_sheet = len(sheets_raw) == 1
+							used_tables = set()
+							with sqlite3.connect(str(DB_PATH)) as _conn:
+								for sheet_name, raw in sheets_raw.items():
+									base = 'abastecimentos' if single_sheet else _sanitize(sheet_name)
+									tbl = base
+									idx = 1
+									while tbl in used_tables:
+										idx += 1
+										tbl = f"{base}_{idx}"
+									used_tables.add(tbl)
+
+									header_row = _find_header_row(raw)
+									if header_row is not None:
+										df_import = pd.read_excel(
+											_io.BytesIO(_file_bytes),
+											sheet_name=sheet_name,
+											header=header_row,
+										)
+									else:
+										df_import = raw
+
+									# Mesclar com dados existentes (não sobrescrever)
+									try:
+										df_existing = pd.read_sql_query(f'SELECT * FROM "{tbl}"', _conn)
+									except Exception:
+										df_existing = pd.DataFrame()
+
+									df_combined = pd.concat([df_existing, df_import], ignore_index=True)
+									df_combined = df_combined.drop_duplicates()
+									df_combined = _safe_df(df_combined)
+									df_combined.to_sql(tbl, _conn, if_exists='replace', index=False)
+
+							_imported_ids.add(_file_id)
+							st.session_state["_imported_ids"] = _imported_ids
+							st.session_state["db_version"] = st.session_state.get("db_version", 0) + 1
+							get_real_df.clear()  # força releitura do banco mesmo se db_version resetar
+							for _k in ("sel_ano", "sel_mes", "sel_sec", "sel_comb"):
+								st.session_state.pop(_k, None)
+							st.success(f"✅ {uploaded.name} importado com sucesso! Recarregando...")
+							st.rerun()
+						except Exception as _e:
+							import traceback as _tb
+							st.error(f"❌ Erro ao importar: {_e}\n\n```\n{_tb.format_exc()}\n```")
+				else:
+					st.info("ℹ️ Este arquivo já foi importado nesta sessão.")
+					if st.button("🔄 Forçar reimportação", key="force_reimport"):
+						st.session_state["_force_reimport"] = True
 						st.rerun()
-					except Exception as _e:
-						st.error(f"❌ Erro ao importar: {_e}")
 
 			st.divider()
 
@@ -1585,7 +1685,6 @@ def run_dashboard() -> None:
 	tab_fin, tab_con, tab_sec = st.tabs(["📊 Financeiro", "⛽ Consumo", "🏢 Secretarias"])
 
 	with tab_fin:
-		st.markdown('<p class="section-title">Visão Geral de Gastos</p>', unsafe_allow_html=True)
 		col_ano, col_mes = st.columns([1, 2])
 		col_ano.plotly_chart(
 			make_bar_gasto_por_ano(anual_scope, selected_secretaria, selected_combustivel),
@@ -1595,12 +1694,11 @@ def run_dashboard() -> None:
 			make_bar_gasto_por_mes_unificado(filtered, selected_secretaria, selected_combustivel),
 			use_container_width=True, key="bar_gasto_mes_unificado",
 		)
-		st.markdown('<p class="section-title">Gasto por Tipo de Combustível e Mês</p>', unsafe_allow_html=True)
 		bar_col, donut_col = st.columns([2, 1])
 		bar_col.plotly_chart(make_bar_consumo_tipo_mes(filtered), use_container_width=True, key="bar_combustivel_fin")
 		donut_col.plotly_chart(make_donut_combustivel_valor(filtered), use_container_width=True, key="donut_combustivel_valor")
-		st.markdown('<p class="section-title">Realizado vs Previsto e Projeção</p>', unsafe_allow_html=True)
-		st.plotly_chart(
+		col_previsto, col_custo = st.columns(2)
+		col_previsto.plotly_chart(
 			make_line_real_previsto_projecao(
 				filtered,
 				limits_scope,
@@ -1609,7 +1707,11 @@ def run_dashboard() -> None:
 			use_container_width=True,
 			key="line_real_previsto",
 		)
-		st.markdown('<p class="section-title">Gasto em R$ vs. Limite por Secretaria</p>', unsafe_allow_html=True)
+		col_custo.plotly_chart(
+			make_line_custo_medio_rl_combustivel(filtered),
+			use_container_width=True,
+			key="line_custo_medio_rl",
+		)
 		st.plotly_chart(
 			make_bar_valor_vs_limite_secretaria(status),
 			use_container_width=True,
@@ -1617,16 +1719,13 @@ def run_dashboard() -> None:
 		)
 
 	with tab_con:
-		st.markdown('<p class="section-title">Consumo por Tipo de Combustível e Mês (Litros)</p>', unsafe_allow_html=True)
 		bar_con_col, donut_con_col = st.columns([2, 1])
 		bar_con_col.plotly_chart(make_bar_consumo_tipo_mes_litros(filtered), use_container_width=True, key="bar_combustivel_litros")
 		donut_con_col.plotly_chart(make_donut_combustivel(filtered), use_container_width=True, key="donut_combustivel")
-		st.markdown('<p class="section-title">Consumo por Combustível por Mês (Litros)</p>', unsafe_allow_html=True)
 		st.plotly_chart(
 			make_line_custo_medio_mes_combustivel(filtered),
 			use_container_width=True, key="line_custo_medio",
 		)
-		st.markdown('<p class="section-title">Limite de Litros por Secretaria e Combustível</p>', unsafe_allow_html=True)
 		st.plotly_chart(
 			make_bar_litros_vs_limite_secretaria(filtered, df_limits),
 			use_container_width=True, key="bar_litros_limite_sec",
@@ -1634,13 +1733,11 @@ def run_dashboard() -> None:
 
 
 	with tab_sec:
-		st.markdown('<p class="section-title">Ranking de Consumo por Secretaria (R$)</p>', unsafe_allow_html=True)
 		st.plotly_chart(make_ranking_consumo_secretaria(status), use_container_width=True, key="bar_ranking_sec")
-		st.markdown('<p class="section-title">Consumo vs. Limite por Secretaria</p>', unsafe_allow_html=True)
 		st.plotly_chart(make_bar_consumo_secretaria(status, df_limits), use_container_width=True, key="bar_sec")
 		# Tabela de alertas detalhada
 		if not excedidas.empty:
-			st.markdown('<p class="section-title">🔴 Secretarias com Limite Excedido</p>', unsafe_allow_html=True)
+			st.markdown('#### 🔴 Secretarias com Limite Excedido')
 			cols_show = [c for c in ("secretaria", "gasto_valor", "limite_valor_periodo", "desvio_pct", "desvio_valor") if c in excedidas.columns]
 			st.dataframe(excedidas[cols_show].rename(columns={
 				"secretaria": "Secretaria",
