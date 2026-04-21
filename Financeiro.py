@@ -236,7 +236,7 @@ def make_donut_combustivel(df_filtered: pd.DataFrame) -> go.Figure:
 	))
 	fig.update_layout(
 		template="plotly_dark",
-		title="Mix de combustível por volume (Litros)",
+		title="Combustível por volume (Litros)",
 		margin={"l": 20, "r": 20, "t": 50, "b": 80},
 		legend={
 			"font": {"size": 20, "color": "#f8fbff"},
@@ -272,7 +272,7 @@ def make_donut_combustivel_valor(df_filtered: pd.DataFrame) -> go.Figure:
 	))
 	fig.update_layout(
 		template="plotly_dark",
-		title="Mix de combustível por valor (R$)",
+		title="Combustível por valor (R$)",
 		margin={"l": 20, "r": 20, "t": 50, "b": 80},
 		legend={
 			"font": {"size": 14, "color": "#f8fbff"},
@@ -898,6 +898,71 @@ def make_bar_consumo_tipo_mes(df_filtered: pd.DataFrame) -> go.Figure:
     return fig
 
 
+def make_ranking_consumo_secretaria(status_df: pd.DataFrame) -> go.Figure:
+    """Ranking de consumo em R$ por secretaria com saldo do empenho empilhado em cinza."""
+    if status_df.empty or "gasto_valor" not in status_df.columns:
+        fig = go.Figure()
+        fig.update_layout(template="plotly_dark", title="Sem dados")
+        return apply_plotly_theme(fig)
+
+    df = status_df[status_df["gasto_valor"] > 0].copy()
+    df["saldo_empenho"] = (df["empenho_2026"] - df["gasto_valor"]).clip(lower=0) if "empenho_2026" in df.columns else 0
+    df = df.sort_values("gasto_valor", ascending=True)
+
+    def moeda_br(v):
+        return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    max_val = (df["empenho_2026"] if "empenho_2026" in df.columns else df["gasto_valor"]).max()
+
+    fig = go.Figure()
+    # Barra azul: gasto
+    fig.add_trace(go.Bar(
+        y=df["secretaria"],
+        x=df["gasto_valor"],
+        orientation="h",
+        name="Gasto",
+        marker_color="#2563eb",
+        text=[moeda_br(v) for v in df["gasto_valor"]],
+        textposition="inside",
+        insidetextanchor="start",
+        textfont={"size": 12, "color": "#fff"},
+        hovertemplate="<b>%{y}</b><br>Gasto: R$ %{x:,.2f}<extra></extra>",
+    ))
+    # Barra cinza: saldo do empenho
+    if "empenho_2026" in df.columns:
+        fig.add_trace(go.Bar(
+            y=df["secretaria"],
+            x=df["saldo_empenho"],
+            orientation="h",
+            name="Saldo do empenho",
+            marker_color="#475569",
+            marker_opacity=0.5,
+            text=[moeda_br(v) if v > 0 else "" for v in df["saldo_empenho"]],
+            textposition="inside",
+            insidetextanchor="end",
+            textfont={"size": 11, "color": "#cbd5e1"},
+            hovertemplate="<b>%{y}</b><br>Saldo: R$ %{x:,.2f}<extra></extra>",
+        ))
+    fig.update_layout(
+        barmode="stack",
+        template="plotly_dark",
+        xaxis_title="R$",
+        xaxis={"range": [0, max_val * 1.02]},
+        margin={"l": 20, "r": 20, "t": 60, "b": 30},
+        height=max(480, 42 * len(df)),
+        bargap=0.25,
+        legend={
+            "orientation": "h", "x": 0.01, "y": 1.04,
+            "xanchor": "left", "yanchor": "bottom",
+            "font": {"size": 13, "color": "#eaf2ff"},
+            "bgcolor": "rgba(0,0,0,0)",
+        },
+    )
+    fig = apply_plotly_theme(fig)
+    fig.update_layout(title={"text": "Ranking de Consumo por Secretaria (R$)", "x": 0.01, "y": 0.99, "font": {"size": 20}})
+    return fig
+
+
 def make_bar_valor_vs_limite_secretaria(status_df: pd.DataFrame) -> go.Figure:
     """Gráfico de barras horizontais: % do limite de R$ consumido por secretaria."""
     if status_df.empty or "gasto_valor" not in status_df.columns:
@@ -1254,9 +1319,6 @@ def run_dashboard() -> None:
 	# Opções dos selectboxes
 	secretaria_options = ["Todas"] + sorted(df_limits["secretaria"].dropna().unique().tolist())
 	combustivel_options = ["Todos"] + sorted(df_real["combustivel"].dropna().unique().tolist())
-	placa_col = next((c for c in ("placa", "veiculo") if c in df_real.columns), None)
-	placa_options = (["Todas"] + sorted(df_real[placa_col].dropna().unique().tolist())) if placa_col else []
-
 	anos_disponiveis = ["Todos"] + sorted(df_real["ano"].dropna().unique().astype(str).tolist(), reverse=True)
 	meses_disponiveis = ["Todos"] + [MONTHS[m] for m in sorted(MONTHS.keys())]
 
@@ -1284,13 +1346,9 @@ def run_dashboard() -> None:
 		selected_mes = st.selectbox("Mês", meses_disponiveis, index=0, key="sel_mes")
 		selected_secretaria = st.selectbox("Unidade / Secretaria", secretaria_options, index=0, key="sel_sec")
 		selected_combustivel = st.selectbox("Produto (Combustível)", combustivel_options, index=0, key="sel_comb")
-		if placa_col:
-			selected_placa = st.selectbox("Veículo (Placa)", placa_options, index=0, key="sel_placa")
-		else:
-			selected_placa = None
 
 		if st.button("🗑️ Limpar Filtros", use_container_width=True):
-			for k in ("sel_ano", "sel_mes", "sel_sec", "sel_comb", "sel_placa"):
+			for k in ("sel_ano", "sel_mes", "sel_sec", "sel_comb"):
 				if k in st.session_state:
 					del st.session_state[k]
 			st.rerun()
@@ -1355,8 +1413,6 @@ def run_dashboard() -> None:
 
 	# ── Filtrar dados conforme seleção ──
 	filtered = apply_filters(df_real, selected_ano, selected_mes, selected_secretaria, selected_combustivel)
-	if selected_placa and placa_col and selected_placa != "Todas":
-		filtered = filtered[filtered[placa_col] == selected_placa]
 
 	# Para gráfico anual: sem filtro de ano/mês, só secretaria/combustivel
 	anual_scope = apply_filters(df_real, "Todos", "Todos", selected_secretaria, selected_combustivel)
@@ -1394,7 +1450,7 @@ def run_dashboard() -> None:
 		f"Valores com desconto contratual de {discount_rate * 100:.2f}% aplicado sobre o valor bruto."
 	)
 
-	tab_fin, tab_con, tab_sec, tab_vei = st.tabs(["📊 Financeiro", "⛽ Consumo", "🏢 Secretarias", "🚗 Veículos"])
+	tab_fin, tab_con, tab_sec = st.tabs(["📊 Financeiro", "⛽ Consumo", "🏢 Secretarias"])
 
 	with tab_fin:
 		st.markdown('<p class="section-title">Visão Geral de Gastos</p>', unsafe_allow_html=True)
@@ -1446,7 +1502,9 @@ def run_dashboard() -> None:
 
 
 	with tab_sec:
-		st.markdown('<p class="section-title">Ranking de Consumo por Secretaria</p>', unsafe_allow_html=True)
+		st.markdown('<p class="section-title">Ranking de Consumo por Secretaria (R$)</p>', unsafe_allow_html=True)
+		st.plotly_chart(make_ranking_consumo_secretaria(status), use_container_width=True, key="bar_ranking_sec")
+		st.markdown('<p class="section-title">Consumo vs. Limite por Secretaria</p>', unsafe_allow_html=True)
 		st.plotly_chart(make_bar_consumo_secretaria(status, df_limits), use_container_width=True, key="bar_sec")
 		# Tabela de alertas detalhada
 		if not excedidas.empty:
@@ -1459,50 +1517,6 @@ def run_dashboard() -> None:
 				"desvio_pct": "Desvio (%)",
 				"desvio_valor": "Desvio (R$)",
 			}), use_container_width=True)
-
-	with tab_vei:
-		st.markdown('<p class="section-title">Análise por Veículo</p>', unsafe_allow_html=True)
-		if placa_col:
-			top_vei = (
-				filtered.groupby(placa_col, as_index=False)
-				.agg(total_valor=("valor", "sum"), total_litros=("litros", "sum"), abastecimentos=("valor", "count"))
-				.sort_values("total_valor", ascending=False)
-				.head(20)
-			)
-			st.plotly_chart(
-				go.Figure(go.Bar(
-					y=top_vei[placa_col],
-					x=top_vei["total_valor"],
-					orientation="h",
-					marker_color="#2563eb",
-					text=[f"R$ {v:,.0f}" for v in top_vei["total_valor"]],
-					textposition="outside",
-					textfont={"color": "#fff", "size": 13},
-				)).update_layout(
-					template="plotly_dark",
-					title="Top 20 Veículos por Gasto (R$)",
-					yaxis={"categoryorder": "total ascending"},
-					margin={"l": 100, "r": 40, "t": 60, "b": 30},
-					height=max(400, 35 * len(top_vei)),
-				),
-				use_container_width=True,
-				key="bar_veiculos",
-			)
-			st.dataframe(
-				top_vei.rename(columns={
-					placa_col: "Veículo/Placa",
-					"total_valor": "Valor Total (R$)",
-					"total_litros": "Litros",
-					"abastecimentos": "Abastecimentos",
-				}),
-				use_container_width=True,
-			)
-		else:
-			st.info(
-				"⚙️ Esta seção está em desenvolvimento.\n\n"
-				"Para ativar, adicione a coluna **`placa`** ou **`veiculo`** na base de dados "
-				"importada pelo `convert_relatorio_to_sqlite.py`."
-			)
 
 if __name__ == "__main__":
 	run_dashboard()
