@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import datetime
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -9,7 +10,7 @@ from plotly_utils import apply_plotly_theme
 from make_bar_consumo_secretaria import make_bar_consumo_secretaria
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "abastecimento.db"
+DB_PATH = BASE_DIR / "relatorio.db"
 CONFIG_PATH = BASE_DIR / "config.json"
 DEFAULT_DISCOUNT_RATE = 0.0405
 
@@ -216,100 +217,26 @@ def make_bar_gasto_por_ano(df: pd.DataFrame, selected_secretaria: str = "Todas",
     return apply_plotly_theme(fig)
 
 
-def make_scatter_preco_tempo(df_filtered: pd.DataFrame) -> go.Figure:
-	if df_filtered.empty:
-		fig = go.Figure()
-		fig.update_layout(template="plotly_dark", title="Evolucao do valor unitario sem dados")
-		return apply_plotly_theme(fig)
-
-	scatter_df = df_filtered[df_filtered["valor_unitario"] > 0].copy()
-	if scatter_df.empty:
-		fig = go.Figure()
-		fig.update_layout(template="plotly_dark", title="Evolucao do valor unitario sem dados")
-		return apply_plotly_theme(fig)
-
-	scatter_df["combustivel_grupo"] = scatter_df["combustivel"].map(
-		lambda value: "DIESEL"
-		if str(value).upper().startswith("DIESEL")
-		else ("ALCOOL" if str(value).upper() in {"ALCOOL", "ETANOL"} else str(value).upper())
-	)
-	scatter_df = scatter_df[scatter_df["combustivel_grupo"].isin(["GASOLINA", "DIESEL", "ALCOOL"])]
-	if scatter_df.empty:
-		fig = go.Figure()
-		fig.update_layout(template="plotly_dark", title="Evolucao do valor unitario sem dados")
-		return apply_plotly_theme(fig)
-
-	scatter_df["data_label"] = scatter_df["data_hora"].dt.strftime("%d/%m/%Y")
-	scatter_df["periodo"] = scatter_df["data_hora"].dt.strftime("%m/%Y")
-
-	fig = px.scatter(
-		scatter_df,
-		x="data_hora",
-		y="valor_unitario",
-		color="combustivel_grupo",
-		color_discrete_map={"GASOLINA": "#2563eb", "DIESEL": "#fb7185", "ALCOOL": "#f97316"},
-		custom_data=["secretaria", "data_label", "periodo", "litros", "valor"],
-		hover_data={
-			"secretaria": False,
-			"data_label": False,
-			"periodo": False,
-			"valor_unitario": ":.3f",
-			"litros": False,
-			"valor": False,
-		},
-		labels={
-			"data_hora": "Data",
-			"valor_unitario": "Valor unitario",
-			"valor": "Valor faturado",
-			"combustivel_grupo": "Combustível",
-			"data_label": "Data",
-		},
-	)
-	fig.update_traces(
-		marker={"size": 9, "opacity": 0.62, "line": {"width": 1, "color": "rgba(255,255,255,0.18)"}},
-		hovertemplate=(
-			"Data: %{customdata[1]}<br>"
-			"Secretaria: %{customdata[0]}<br>"
-			"Periodo: %{customdata[2]}<br>"
-			"Valor unitario: R$ %{y:,.3f}<br>"
-			"Litros: %{customdata[3]:,.3f}<br>"
-			"Valor do registro: R$ %{customdata[4]:,.2f}<extra>%{fullData.name}</extra>"
-		),
-	)
-	fig.update_layout(
-		template="plotly_dark",
-		title="Valor unitario ao longo do tempo",
-		xaxis_title="Data",
-		yaxis_title="Valor unitario (R$/L)",
-		margin={"l": 30, "r": 30, "t": 72, "b": 30},
-		legend={"orientation": "h", "x": 0.01, "y": 1.02, "xanchor": "left", "yanchor": "bottom"},
-	)
-	return apply_plotly_theme(fig)
-
-
-
-
-
 def make_donut_combustivel(df_filtered: pd.DataFrame) -> go.Figure:
 	if df_filtered.empty:
 		fig = go.Figure()
 		fig.update_layout(template="plotly_dark", title="Sem dados por combustível")
 		return apply_plotly_theme(fig)
 
-	by_fuel = df_filtered.groupby("combustivel", as_index=False).agg(valor=("valor", "sum"))
+	by_fuel = df_filtered.groupby("combustivel", as_index=False).agg(litros=("litros", "sum"))
 	color_map = {"GASOLINA": "#2563eb", "ALCOOL": "#ff7f0e", "DIESEL": "#fb7185", "DIESEL S10": "#38bdf8"}
 	fig = go.Figure(go.Pie(
 		labels=by_fuel["combustivel"],
-		values=by_fuel["valor"],
+		values=by_fuel["litros"],
 		hole=0.5,
 		marker_colors=[color_map.get(c, "#2563eb") for c in by_fuel["combustivel"]],
 		textinfo="label+percent",
-		hoverinfo="label+value+percent",
+		hovertemplate="<b>%{label}</b><br>%{value:,.0f} L<br>%{percent}<extra></extra>",
 		showlegend=True
 	))
 	fig.update_layout(
 		template="plotly_dark",
-		title="Consumo combustível por tipo",
+		title="Mix de combustível por volume (Litros)",
 		margin={"l": 20, "r": 20, "t": 50, "b": 80},
 		legend={
 			"font": {"size": 20, "color": "#f8fbff"},
@@ -326,122 +253,38 @@ def make_donut_combustivel(df_filtered: pd.DataFrame) -> go.Figure:
 	return apply_plotly_theme(fig)
 
 
-def make_bullet_secretarias(status_df: pd.DataFrame) -> go.Figure:
-	# Ordenar secretarias pelo percentual gasto do empenho (gasto_valor / empenho_2026)
-	data = status_df.copy()
-	data = data.sort_values("gasto_valor", ascending=True)
-	fig = go.Figure()
+def make_donut_combustivel_valor(df_filtered: pd.DataFrame) -> go.Figure:
+	if df_filtered.empty:
+		fig = go.Figure()
+		fig.update_layout(template="plotly_dark", title="Sem dados por combustível")
+		return apply_plotly_theme(fig)
 
-	# Cálculos corretos usando limite_valor_periodo
-	empenho = data["empenho_2026"]
-	limite_periodo = data["limite_valor_periodo"]
-	gasto = data["gasto_valor"]
-	gasto_ate_limite = gasto.where(gasto <= limite_periodo, limite_periodo)
-	excesso = (gasto - limite_periodo).clip(lower=0)
-	saldo = (empenho - gasto).clip(lower=0)
-
-	# Azul: gasto até limite
-	fig.add_trace(
-		go.Bar(
-			y=data["secretaria"],
-			x=gasto_ate_limite,
-			orientation="h",
-			name="Gasto até limite",
-			marker_color="#2563eb",  # Azul igual ao gráfico de barras
-			opacity=0.95,
-			text=[f"R$ {v:,.0f}" if v > 0 else "" for v in gasto_ate_limite],
-			textposition="inside",
-			insidetextanchor="middle",
-			textfont={"color": "#fff", "size": 12},
-			hovertemplate="<b>%{y}</b><br>Gasto até limite: <b>R$ %{x:,.0f}</b><br>Limite: R$ %{customdata[0]:,.0f}<br>Empenho: R$ %{customdata[1]:,.0f}",
-			customdata=list(zip(limite_periodo, empenho)),
-		)
-	)
-	# Vermelho: excesso
-	fig.add_trace(
-		go.Bar(
-			y=data["secretaria"],
-			x=excesso,
-			orientation="h",
-			name="Excesso sobre limite",
-			marker_color="#ef4444",
-			opacity=0.95,
-			text=[f"R$ {v:,.0f}" if v > 0 else "" for v in excesso],
-			textposition="inside",
-			insidetextanchor="middle",
-			textfont={"color": "#fff", "size": 12},
-			hovertemplate="<b>%{y}</b><br>Excesso: <b>R$ %{x:,.0f}</b><br>Limite: R$ %{customdata[0]:,.0f}<br>Empenho: R$ %{customdata[1]:,.0f}",
-			customdata=list(zip(limite_periodo, empenho)),
-		)
-	)
-	# Cinza: saldo do empenho
-	fig.add_trace(
-		go.Bar(
-			y=data["secretaria"],
-			x=saldo,
-			orientation="h",
-			name="Saldo do empenho",
-			marker_color="#94a3b8",
-			opacity=0.85,
-			text=[f"R$ {v:,.0f}" if v > 0 else "" for v in saldo],
-			textposition="inside",
-			insidetextanchor="middle",
-			textfont={"color": "#222", "size": 12},
-			hovertemplate="<b>%{y}</b><br>Saldo do empenho: <b>R$ %{x:,.0f}</b><br>Empenho: R$ %{customdata[0]:,.0f}",
-			customdata=list(zip(empenho)),
-		)
-	)
-
-	# Após adicionar as barras, adicionar o valor do empenho fora das barras, alinhado à direita
-	max_x = (gasto_ate_limite + excesso + saldo).max()
-	deslocamento = max_x * 0.01 if max_x > 0 else 1
-	for idx, (sec, emp, x_gasto, x_excesso, x_saldo) in enumerate(zip(data["secretaria"], empenho, gasto_ate_limite, excesso, saldo)):
-		# Posição x: final da barra + deslocamento
-		x_final = x_gasto + x_excesso + x_saldo + deslocamento
-		fig.add_annotation(
-			x=x_final,
-			y=sec,
-			text=f"Empenho: R$ {emp:,.0f}",
-			showarrow=False,
-			font=dict(size=12, color="#fff"),
-			align="left",
-			bgcolor="rgba(30,30,30,0.7)",
-			bordercolor="#2563eb",
-			borderwidth=1,
-			borderpad=3,
-			xanchor="left",
-			yanchor="middle",
-		)
-
-	# Adicionar linha de referência do limite para cada secretaria
-	for idx, (sec, lim, gasto) in enumerate(zip(data["secretaria"], limite_periodo, gasto)):
-		if pd.notnull(lim) and lim > 0:
-			# Traço do limite sempre na altura da barra (até o valor máximo entre gasto e limite)
-			x_max = max(lim, gasto)
-			fig.add_shape(
-				type="line",
-				x0=lim,
-				x1=lim,
-				y0=idx - 0.35,
-				y1=idx + 0.35,
-				line={"color": "#eab308", "width": 4, "dash": "dash"},
-				xref="x",
-				yref="y",
-				layer="above"
-			)
-
-	# Ajuste para visualização de empenhos pequenos: escala logarítmica se necessário
-	use_log_x = (gasto_ate_limite.max() > 0 and gasto_ate_limite.min() > 0 and (gasto_ate_limite.max() / gasto_ate_limite.min() > 30))
+	by_fuel = df_filtered.groupby("combustivel", as_index=False).agg(valor=("valor", "sum"))
+	color_map = {"GASOLINA": "#2563eb", "ALCOOL": "#ff7f0e", "DIESEL": "#fb7185", "DIESEL S10": "#38bdf8"}
+	fig = go.Figure(go.Pie(
+		labels=by_fuel["combustivel"],
+		values=by_fuel["valor"],
+		hole=0.5,
+		marker_colors=[color_map.get(c, "#2563eb") for c in by_fuel["combustivel"]],
+		textinfo="label+percent",
+		hovertemplate="<b>%{label}</b><br>R$ %{value:,.2f}<br>%{percent}<extra></extra>",
+		showlegend=True
+	))
 	fig.update_layout(
-		barmode="stack",
 		template="plotly_dark",
-		title={"text": "Grafico de bala: empenhado, gasto, excesso e saldo por secretaria", "x": 0.01, "y": 0.98},
-		margin={"l": 120, "r": 40, "t": 92, "b": 30},
-		legend={"orientation": "h", "x": 0.01, "y": 1.03, "xanchor": "left", "yanchor": "bottom"},
-		shapes=fig.layout.shapes,
-		bargap=0.25,  # Mais espaço entre barras
-		height=max(600, 40 * len(data)),  # Altura dinâmica para barras mais altas
-		xaxis={"type": "log" if use_log_x else "linear"},
+		title="Mix de combustível por valor (R$)",
+		margin={"l": 20, "r": 20, "t": 50, "b": 80},
+		legend={
+			"font": {"size": 14, "color": "#f8fbff"},
+			"bgcolor": "rgba(0,0,0,0)",
+			"orientation": "h",
+			"x": 0.5,
+			"y": -0.15,
+			"xanchor": "center",
+			"yanchor": "top",
+			"bordercolor": "#38bdf8",
+			"borderwidth": 1
+		},
 	)
 	return apply_plotly_theme(fig)
 
@@ -627,6 +470,77 @@ def inject_style() -> None:
 		@media (max-width: 1100px) {
 			.kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 		}
+
+		/* ── Sidebar brand ── */
+		.sidebar-brand {
+			display: flex;
+			align-items: center;
+			gap: 14px;
+			padding: 8px 0 14px 0;
+			border-bottom: 1px solid rgba(142,163,190,0.18);
+			margin-bottom: 6px;
+		}
+		.sidebar-brand-icon {
+			font-size: 2rem;
+			line-height: 1;
+		}
+		.sidebar-brand-title {
+			font-family: 'Rajdhani', sans-serif;
+			font-size: 1.15rem;
+			font-weight: 700;
+			color: #e7eef8;
+			line-height: 1.1;
+			letter-spacing: 0.04em;
+		}
+		.sidebar-brand-sub {
+			font-size: 0.7rem;
+			color: #8ea3be;
+			text-transform: uppercase;
+			letter-spacing: 0.1em;
+		}
+
+		/* ── Sidebar section header ── */
+		.sidebar-section {
+			font-size: 0.68rem;
+			font-weight: 700;
+			letter-spacing: 0.14em;
+			color: #8ea3be;
+			text-transform: uppercase;
+			margin: 14px 0 8px 0;
+			padding-bottom: 4px;
+			border-bottom: 1px solid rgba(142,163,190,0.18);
+		}
+
+		/* ── Alert cards ── */
+		.alert-card {
+			display: flex;
+			align-items: center;
+			gap: 12px;
+			padding: 9px 12px;
+			border-radius: 8px;
+			margin-bottom: 7px;
+			background: rgba(10, 18, 27, 0.85);
+			border: 1px solid rgba(142,163,190,0.12);
+		}
+		.alert-card.alert-red  { border-left: 4px solid #ef4444; }
+		.alert-card.alert-yellow { border-left: 4px solid #eab308; }
+		.alert-card.alert-green  { border-left: 4px solid #22c55e; }
+		.alert-icon { font-size: 1.4rem; line-height: 1; }
+		.alert-body { display: flex; flex-direction: column; gap: 1px; }
+		.alert-count-red    { font-family:'Rajdhani',sans-serif; font-size:1.3rem; font-weight:700; color:#ef4444; line-height:1; }
+		.alert-count-yellow { font-family:'Rajdhani',sans-serif; font-size:1.3rem; font-weight:700; color:#eab308; line-height:1; }
+		.alert-count-green  { font-family:'Rajdhani',sans-serif; font-size:1.3rem; font-weight:700; color:#22c55e; line-height:1; }
+		.alert-label { font-size: 0.75rem; color: #c9d8ea; }
+		.alert-detail { font-size: 0.65rem; color: #8ea3be; }
+
+		/* ── Última atualização ── */
+		.sidebar-footer {
+			font-size: 0.68rem;
+			color: #8ea3be;
+			margin-top: 10px;
+			padding-top: 8px;
+			border-top: 1px solid rgba(142,163,190,0.15);
+		}
 		</style>
 		""",
 		unsafe_allow_html=True,
@@ -744,14 +658,23 @@ def load_sqlite(path: Path) -> pd.DataFrame:
         table_name = resolve_source_table(conn)
         query = f"""
             SELECT
-                "Data/Hora" AS data_hora,
-                "Unidade" AS secretaria,
-                "Produto" AS combustivel,
-                "Vr. Unit." AS valor_unitario,
-                "Qtde (L)" AS litros,
-                "Valor" AS valor,
-                "Placa" AS placa,
-                "Km Rodado" AS km_rodado
+                "Data/Hora"            AS data_hora,
+                "Unidade"              AS secretaria,
+                "Produto"              AS combustivel,
+                "Vr. Unit."            AS valor_unitario,
+                "Qtde (L)"             AS litros,
+                "Valor"                AS valor,
+                "Placa"                AS placa,
+                "Condutor"             AS condutor,
+                "Km Rodado"            AS km_rodado,
+                "km/L"                 AS km_por_litro,
+                "R$/km"                AS custo_por_km,
+                "KM Minimo"            AS km_minimo,
+                "KM Maximo"            AS km_maximo,
+                "Estabelecimento"      AS posto,
+                "Marca"                AS marca,
+                "Modelo"               AS modelo,
+                "Tipo Frota"           AS tipo_frota
             FROM {table_name}
         """
         df = pd.read_sql_query(query, conn)
@@ -759,13 +682,14 @@ def load_sqlite(path: Path) -> pd.DataFrame:
     df["data_hora"] = pd.to_datetime(df["data_hora"], errors="coerce")
     df["secretaria"] = df["secretaria"].map(normalize_secretaria)
     df["combustivel"] = df["combustivel"].map(normalize_fuel)
-    df["valor_unitario"] = pd.to_numeric(df["valor_unitario"], errors="coerce").fillna(0.0)
-    df["litros"] = pd.to_numeric(df["litros"], errors="coerce").fillna(0.0)
-    df["valor"] = pd.to_numeric(df["valor"], errors="coerce").fillna(0.0)
+    for num_col in ("valor_unitario", "litros", "valor", "km_rodado", "km_por_litro", "custo_por_km", "km_minimo", "km_maximo"):
+        if num_col in df.columns:
+            df[num_col] = pd.to_numeric(df[num_col], errors="coerce").fillna(0.0)
+    for str_col in ("placa", "condutor", "posto", "marca", "modelo", "tipo_frota"):
+        if str_col in df.columns:
+            df[str_col] = df[str_col].astype(str).str.strip()
     if "placa" in df.columns:
-        df["placa"] = df["placa"].astype(str).str.strip().str.upper()
-    if "km_rodado" in df.columns:
-        df["km_rodado"] = pd.to_numeric(df["km_rodado"], errors="coerce").fillna(0.0)
+        df["placa"] = df["placa"].str.upper()
     df = df.dropna(subset=["data_hora"])
     df["ano"] = df["data_hora"].dt.year
     df["mes"] = df["data_hora"].dt.month
@@ -942,13 +866,223 @@ def make_bar_consumo_tipo_mes(df_filtered: pd.DataFrame) -> go.Figure:
                 offsetgroup=fuel,
                 legendgroup=fuel,
                 showlegend=True,
+                textfont={"size": 13, "color": "#fff", "family": "'Space Grotesk', sans-serif"},
+            )
+        )
+    fig.update_layout(
+        template="plotly_dark",
+        xaxis_title={"text": "Período", "font": {"size": 16}},
+        yaxis_title={"text": "Valor faturado (R$)", "font": {"size": 16}},
+        xaxis={"tickfont": {"size": 15}},
+        yaxis={"tickfont": {"size": 14}},
+        barmode="group",
+        bargap=0.18,
+        bargroupgap=0.08,
+        margin={"l": 30, "r": 30, "t": 90, "b": 30},
+        legend={
+            "orientation": "h",
+            "x": 0.01,
+            "y": 1.04,
+            "xanchor": "left",
+            "yanchor": "bottom",
+            "font": {"size": 16, "color": "#eaf2ff"},
+        },
+    )
+    fig = apply_plotly_theme(fig)
+    fig.update_layout(
+        title={"text": "Consumo de combustível por mês e tipo", "x": 0.01, "y": 0.98, "font": {"size": 22}},
+        legend={"font": {"size": 16, "color": "#eaf2ff"}, "orientation": "h", "x": 0.01, "y": 1.04, "xanchor": "left", "yanchor": "bottom"},
+        xaxis={"tickfont": {"size": 15}},
+        yaxis={"tickfont": {"size": 14}},
+    )
+    return fig
+
+
+def make_bar_valor_vs_limite_secretaria(status_df: pd.DataFrame) -> go.Figure:
+    """Gráfico de barras horizontais: % do limite de R$ consumido por secretaria."""
+    if status_df.empty or "gasto_valor" not in status_df.columns:
+        fig = go.Figure()
+        fig.update_layout(template="plotly_dark", title="Sem dados")
+        return apply_plotly_theme(fig)
+
+    df = status_df[status_df["limite_valor_periodo"] > 0].copy()
+    if df.empty:
+        fig = go.Figure()
+        fig.update_layout(template="plotly_dark", title="Sem limites de valor definidos")
+        return apply_plotly_theme(fig)
+
+    df["pct"] = df["gasto_valor"] / df["limite_valor_periodo"] * 100
+    df = df.sort_values("pct", ascending=True)
+
+    def bar_color(pct):
+        if pct > 100:
+            return "#ef4444"
+        if pct > 80:
+            return "#eab308"
+        return "#22c55e"
+
+    colors = [bar_color(p) for p in df["pct"]]
+    pct_clip = df["pct"].clip(upper=150)
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        y=df["secretaria"],
+        x=pct_clip,
+        orientation="h",
+        marker_color=colors,
+        text=[
+            f"{p:.0f}%  (R$ {v:,.0f} / R$ {l:,.0f})"
+            for p, v, l in zip(df["pct"], df["gasto_valor"], df["limite_valor_periodo"])
+        ],
+        textposition="outside",
+        textfont={"size": 12, "color": "#eaf2ff"},
+        customdata=list(zip(df["gasto_valor"], df["limite_valor_periodo"], df["pct"])),
+        hovertemplate=(
+            "<b>%{y}</b><br>"
+            "Gasto: R$ %{customdata[0]:,.2f}<br>"
+            "Limite: R$ %{customdata[1]:,.2f}<br>"
+            "Uso: %{customdata[2]:.1f}%<extra></extra>"
+        ),
+        showlegend=False,
+    ))
+    fig.add_vline(x=100, line_dash="dash", line_color="#eab308", line_width=2)
+    fig.update_layout(
+        template="plotly_dark",
+        xaxis_title="% do limite consumido",
+        xaxis={"range": [0, 155], "ticksuffix": "%"},
+        margin={"l": 20, "r": 80, "t": 60, "b": 30},
+        height=max(400, 30 * len(df)),
+    )
+    fig = apply_plotly_theme(fig)
+    fig.update_layout(title={"text": "Gasto em R$ vs. limite por secretaria", "x": 0.01, "y": 0.99, "font": {"size": 20}})
+    return fig
+
+
+def make_bar_litros_vs_limite_secretaria(df_filtered: pd.DataFrame, df_limits: pd.DataFrame) -> go.Figure:
+    """Gráfico de barras horizontais: % do limite de litros consumido por secretaria e combustível."""
+    if df_filtered.empty or df_limits.empty:
+        fig = go.Figure()
+        fig.update_layout(template="plotly_dark", title="Sem dados")
+        return apply_plotly_theme(fig)
+
+    months = month_count(df_filtered)
+
+    df = df_filtered.copy()
+    df["combustivel_grupo"] = df["combustivel"].map(
+        lambda v: "DIESEL" if str(v).upper().startswith("DIESEL")
+        else ("ALCOOL" if str(v).upper() in {"ALCOOL", "ETANOL"} else str(v).upper())
+    )
+    df = df[df["combustivel_grupo"].isin(["GASOLINA", "DIESEL", "ALCOOL"])]
+    consumed = df.groupby(["secretaria", "combustivel_grupo"], as_index=False).agg(litros=("litros", "sum"))
+
+    fuel_limit_col = {"GASOLINA": "limite_litros_gasolina", "ALCOOL": "limite_litros_alcool", "DIESEL": "limite_litros_diesel"}
+    rows = []
+    for _, row in df_limits.iterrows():
+        for fuel, col in fuel_limit_col.items():
+            lim = float(row.get(col, 0)) * months
+            if lim > 0:
+                rows.append({"secretaria": row["secretaria"], "combustivel_grupo": fuel, "limite": lim})
+    if not rows:
+        fig = go.Figure()
+        fig.update_layout(template="plotly_dark", title="Sem limites por litro definidos")
+        return apply_plotly_theme(fig)
+
+    limits_df = pd.DataFrame(rows)
+    merged = limits_df.merge(consumed, on=["secretaria", "combustivel_grupo"], how="left").fillna(0)
+    merged["pct"] = merged.apply(lambda r: r["litros"] / r["limite"] * 100 if r["limite"] > 0 else 0, axis=1)
+    merged["label_y"] = merged["secretaria"] + " · " + merged["combustivel_grupo"].str.title()
+    merged = merged.sort_values(["secretaria", "combustivel_grupo"])
+
+    def bar_color(pct):
+        if pct > 100:
+            return "#ef4444"
+        if pct > 80:
+            return "#eab308"
+        return "#22c55e"
+
+    consumed_pct = merged["pct"].clip(upper=150)
+    colors = [bar_color(p) for p in merged["pct"]]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        y=merged["label_y"],
+        x=consumed_pct,
+        orientation="h",
+        marker_color=colors,
+        text=[f"{p:.0f}% ({v:,.0f} L / {l:,.0f} L)" for p, v, l in zip(merged["pct"], merged["litros"], merged["limite"])],
+        textposition="outside",
+        textfont={"size": 12, "color": "#eaf2ff"},
+        customdata=list(zip(merged["litros"], merged["limite"], merged["pct"])),
+        hovertemplate="<b>%{y}</b><br>Consumido: %{customdata[0]:,.0f} L<br>Limite: %{customdata[1]:,.0f} L<br>Uso: %{customdata[2]:.1f}%<extra></extra>",
+        showlegend=False,
+    ))
+    # Linha de referência 100%
+    fig.add_vline(x=100, line_dash="dash", line_color="#eab308", line_width=2)
+    fig.update_layout(
+        template="plotly_dark",
+        xaxis_title="% do limite consumido",
+        xaxis={"range": [0, 155], "ticksuffix": "%"},
+        margin={"l": 20, "r": 60, "t": 60, "b": 30},
+        height=max(400, 28 * len(merged)),
+    )
+    fig = apply_plotly_theme(fig)
+    fig.update_layout(title={"text": "Consumo de litros vs. limite por secretaria", "x": 0.01, "y": 0.99, "font": {"size": 20}})
+    return fig
+
+
+def make_bar_consumo_tipo_mes_litros(df_filtered: pd.DataFrame) -> go.Figure:
+    if df_filtered.empty:
+        fig = go.Figure()
+        fig.update_layout(template="plotly_dark", title="Sem dados para consumo por tipo e mês")
+        return apply_plotly_theme(fig)
+
+    df = df_filtered.copy()
+    df["combustivel_grupo"] = df["combustivel"].map(
+        lambda value: "DIESEL"
+        if str(value).upper().startswith("DIESEL")
+        else ("ALCOOL" if str(value).upper() in {"ALCOOL", "ETANOL"} else str(value).upper())
+    )
+    df = df[df["combustivel_grupo"].isin(["GASOLINA", "DIESEL", "ALCOOL"])]
+    if df.empty:
+        fig = go.Figure()
+        fig.update_layout(template="plotly_dark", title="Sem dados para consumo por tipo e mês")
+        return apply_plotly_theme(fig)
+
+    grupo = (
+        df.groupby(["ano", "mes", "mes_nome", "combustivel_grupo"], as_index=False)
+        .agg(litros_total=("litros", "sum"))
+        .sort_values(["ano", "mes", "combustivel_grupo"])
+    )
+
+    def corrige_mes_nome(mes_nome):
+        return "Março" if str(mes_nome).strip().lower() == "marco" else mes_nome
+
+    grupo["periodo"] = grupo.apply(lambda row: f"{corrige_mes_nome(row['mes_nome'])}/{int(row['ano'])}", axis=1)
+
+    color_map = {"GASOLINA": "#2563eb", "DIESEL": "#38bdf8", "ALCOOL": "#f97316"}
+    fig = go.Figure()
+    for fuel in ["GASOLINA", "DIESEL", "ALCOOL"]:
+        dados = grupo[grupo["combustivel_grupo"] == fuel]
+        if dados.empty:
+            continue
+        fig.add_trace(
+            go.Bar(
+                x=dados["periodo"],
+                y=dados["litros_total"],
+                name=fuel.title(),
+                marker_color=color_map[fuel],
+                text=[f"{v:,.0f} L" for v in dados["litros_total"]],
+                textposition="outside",
+                offsetgroup=fuel,
+                legendgroup=fuel,
+                showlegend=True,
                 textfont={"size": 16, "color": "#fff", "family": "'Space Grotesk', sans-serif"},
             )
         )
     fig.update_layout(
         template="plotly_dark",
         xaxis_title={"text": "Período", "font": {"size": 14}},
-        yaxis_title={"text": "Valor faturado (R$)", "font": {"size": 14}},
+        yaxis_title={"text": "Volume (Litros)", "font": {"size": 14}},
         barmode="group",
         bargap=0.18,
         bargroupgap=0.08,
@@ -963,7 +1097,7 @@ def make_bar_consumo_tipo_mes(df_filtered: pd.DataFrame) -> go.Figure:
         },
     )
     fig = apply_plotly_theme(fig)
-    fig.update_layout(title={"text": "Consumo de combustível por mês e tipo", "x": 0.01, "y": 0.98, "font": {"size": 22}})
+    fig.update_layout(title={"text": "Consumo de combustível por mês e tipo (Litros)", "x": 0.01, "y": 0.98, "font": {"size": 22}})
     return fig
 
 
@@ -975,10 +1109,8 @@ def make_line_custo_medio_mes_combustivel(df_filtered: pd.DataFrame) -> go.Figur
 
     df = df_filtered.copy()
     grupo = df.groupby(["ano", "mes", "combustivel"], as_index=False).agg(
-        valor_total=("valor", "sum"),
         litros=("litros", "sum"),
     )
-    grupo["custo_medio"] = grupo["valor_total"] / grupo["litros"]
     grupo["mes_label"] = grupo["mes"].apply(lambda m: MONTHS[m])
 
     color_map = {
@@ -992,10 +1124,10 @@ def make_line_custo_medio_mes_combustivel(df_filtered: pd.DataFrame) -> go.Figur
         dados = grupo[grupo["combustivel"] == combustivel]
         fig.add_trace(go.Scatter(
             x=dados["mes_label"],
-            y=dados["custo_medio"],
+            y=dados["litros"],
             mode="lines+markers",
             name=str(combustivel),
-            text=[f"R$ {v:,.3f}" for v in dados["custo_medio"]],
+            text=[f"{v:,.0f} L" for v in dados["litros"]],
             textposition="top center",
             line={"color": color_map.get(str(combustivel).upper(), "#38bdf8"), "width": 3},
             marker={"color": color_map.get(str(combustivel).upper(), "#38bdf8")},
@@ -1003,12 +1135,12 @@ def make_line_custo_medio_mes_combustivel(df_filtered: pd.DataFrame) -> go.Figur
     fig.update_layout(
         template="plotly_dark",
         xaxis_title="Mês",
-        yaxis_title="Custo médio (R$/L)",
+        yaxis_title="Volume (Litros)",
         margin={"l": 30, "r": 30, "t": 60, "b": 30},
         legend={"font": {"size": 16, "color": "#eaf2ff"}},
     )
     fig = apply_plotly_theme(fig)
-    fig.update_layout(title={"text": "Custo médio de combustível por mês", "x": 0.01, "y": 0.98, "font": {"size": 22}})
+    fig.update_layout(title={"text": "Consumo por combustível por mês (Litros)", "x": 0.01, "y": 0.98, "font": {"size": 22}})
     return fig
 
 
@@ -1114,36 +1246,121 @@ def apply_filters(
 def run_dashboard() -> None:
 	st.set_page_config(page_title="Painel de Abastecimento", page_icon="⛽", layout="wide", initial_sidebar_state="expanded")
 	inject_style()
-	# monthly_scope só pode ser usado após ser definido
 
 	df_limits = get_limits_df()
 	discount_rate = get_discount_rate()
 	df_real = apply_discount(get_real_df("v2_valor_unitario"), discount_rate)
 
-	anos_options = ["Todos"] + [str(x) for x in sorted(df_real["ano"].dropna().unique())]
-	mes_options = ["Todos"] + [MONTHS[i] for i in sorted(df_real["mes"].dropna().unique())]
+	# Opções dos selectboxes
 	secretaria_options = ["Todas"] + sorted(df_limits["secretaria"].dropna().unique().tolist())
 	combustivel_options = ["Todos"] + sorted(df_real["combustivel"].dropna().unique().tolist())
-	default_ano_index = anos_options.index("2026") if "2026" in anos_options else 0
+	placa_col = next((c for c in ("placa", "veiculo") if c in df_real.columns), None)
+	placa_options = (["Todas"] + sorted(df_real[placa_col].dropna().unique().tolist())) if placa_col else []
+
+	anos_disponiveis = ["Todos"] + sorted(df_real["ano"].dropna().unique().astype(str).tolist(), reverse=True)
+	meses_disponiveis = ["Todos"] + [MONTHS[m] for m in sorted(MONTHS.keys())]
+
+	# Data máxima para exibir no rodapé
+	data_max = df_real["data_hora"].dt.date.max() if "data_hora" in df_real.columns else datetime.date.today()
 
 	with st.sidebar:
-		st.markdown("### Menu Analítico")
-		st.caption("Filtros do período e escopo")
-		selected_ano = st.selectbox("Ano", anos_options, index=default_ano_index)
-		selected_mes = st.selectbox("Mês", mes_options, index=0)
-		selected_secretaria = st.selectbox("Secretaria", secretaria_options, index=0)
-		selected_combustivel = st.selectbox("Combustível", combustivel_options, index=0)
-		st.divider()
-		st.caption(f"Desconto contratual: {discount_rate * 100:.2f}%")
-		st.caption(f"Base: {DB_PATH.name}")
+		# ── Brand ──
+		st.markdown(
+			"""<div class="sidebar-brand">
+			<span class="sidebar-brand-icon">⛽</span>
+			<div>
+				<div class="sidebar-brand-title">ABASTECIMENTO</div>
+				<div class="sidebar-brand-sub">Frota Municipal</div>
+			</div>
+			</div>""",
+			unsafe_allow_html=True,
+		)
 
-	filtered = apply_filters(
-		df_real,
-		selected_ano,
-		selected_mes,
-		selected_secretaria,
-		selected_combustivel,
-	)
+		# ── Filtros ──
+		st.markdown('<div class="sidebar-section">FILTROS</div>', unsafe_allow_html=True)
+
+		ano_default_idx = next((i for i, a in enumerate(anos_disponiveis) if a == str(datetime.date.today().year)), 0)
+		selected_ano = st.selectbox("Ano", anos_disponiveis, index=ano_default_idx, key="sel_ano")
+		selected_mes = st.selectbox("Mês", meses_disponiveis, index=0, key="sel_mes")
+		selected_secretaria = st.selectbox("Unidade / Secretaria", secretaria_options, index=0, key="sel_sec")
+		selected_combustivel = st.selectbox("Produto (Combustível)", combustivel_options, index=0, key="sel_comb")
+		if placa_col:
+			selected_placa = st.selectbox("Veículo (Placa)", placa_options, index=0, key="sel_placa")
+		else:
+			selected_placa = None
+
+		if st.button("🗑️ Limpar Filtros", use_container_width=True):
+			for k in ("sel_ano", "sel_mes", "sel_sec", "sel_comb", "sel_placa"):
+				if k in st.session_state:
+					del st.session_state[k]
+			st.rerun()
+
+		# ── Alertas (computados com escopo do ano corrente, todas secretarias) ──
+		ano_corrente = str(datetime.date.today().year)
+		df_alert_base = apply_filters(df_real, ano_corrente, "Todos", "Todas", "Todos")
+		status_alerts = build_secretaria_status(df_alert_base, df_limits)
+
+		excedidas = status_alerts[status_alerts["status"] == "ALERTA"].copy() if "status" in status_alerts.columns else pd.DataFrame()
+		proximas = status_alerts[
+			(status_alerts["desvio_pct"] >= -20) & (status_alerts["desvio_pct"] < 0)
+		].copy() if "desvio_pct" in status_alerts.columns else pd.DataFrame()
+		ok = status_alerts[status_alerts["status"] == "OK"].copy() if "status" in status_alerts.columns else pd.DataFrame()
+
+		n_exc = len(excedidas)
+		n_prox = len(proximas)
+		n_ok = len(ok)
+
+		exc_names = ", ".join(excedidas["secretaria"].tolist()[:3]) if n_exc else ""
+		prox_names = ", ".join(proximas["secretaria"].tolist()[:3]) if n_prox else ""
+
+		st.markdown('<div class="sidebar-section">ALERTAS</div>', unsafe_allow_html=True)
+		st.markdown(
+			f"""
+			<div class="alert-card alert-red">
+				<span class="alert-icon">🔴</span>
+				<div class="alert-body">
+					<span class="alert-count-red">{n_exc}</span>
+					<span class="alert-label">Limite mensal excedido</span>
+					<span class="alert-detail">{exc_names}</span>
+				</div>
+			</div>
+			<div class="alert-card alert-yellow">
+				<span class="alert-icon">🟡</span>
+				<div class="alert-body">
+					<span class="alert-count-yellow">{n_prox}</span>
+					<span class="alert-label">Próximo do limite (&lt;20%)</span>
+					<span class="alert-detail">{prox_names}</span>
+				</div>
+			</div>
+			<div class="alert-card alert-green">
+				<span class="alert-icon">🟢</span>
+				<div class="alert-body">
+					<span class="alert-count-green">{n_ok}</span>
+					<span class="alert-label">Dentro do limite</span>
+				</div>
+			</div>
+			""",
+			unsafe_allow_html=True,
+		)
+
+		# ── Rodapé ──
+		ultima_atualizacao = data_max.strftime("%d/%m/%Y") if data_max else "—"
+		st.markdown(
+			f"""<div class="sidebar-footer">
+			🕐 Última atualização: <b>{ultima_atualizacao}</b><br>
+			Base: {DB_PATH.name} &nbsp;|&nbsp; Desconto: {discount_rate*100:.2f}%
+			</div>""",
+			unsafe_allow_html=True,
+		)
+
+	# ── Filtrar dados conforme seleção ──
+	filtered = apply_filters(df_real, selected_ano, selected_mes, selected_secretaria, selected_combustivel)
+	if selected_placa and placa_col and selected_placa != "Todas":
+		filtered = filtered[filtered[placa_col] == selected_placa]
+
+	# Para gráfico anual: sem filtro de ano/mês, só secretaria/combustivel
+	anual_scope = apply_filters(df_real, "Todos", "Todos", selected_secretaria, selected_combustivel)
+
 	limits_scope = df_limits.copy()
 	if selected_secretaria != "Todas":
 		limits_scope = limits_scope[limits_scope["secretaria"] == normalize_secretaria(selected_secretaria)]
@@ -1154,29 +1371,138 @@ def run_dashboard() -> None:
 		limits_scope,
 		usar_limite_quinzenal_secretaria=selected_secretaria != "Todas",
 	)
+
+	# ── Cabeçalho principal ──
+	ctx_parts = [selected_ano if selected_ano != "Todos" else "Todos os anos"]
+	if selected_mes != "Todos":
+		ctx_parts.append(selected_mes)
+	if selected_secretaria != "Todas":
+		ctx_parts.append(selected_secretaria)
+	if selected_combustivel != "Todos":
+		ctx_parts.append(selected_combustivel)
+	filtro_ctx = " · ".join(ctx_parts)
+	st.markdown(
+		f"""<div style="display:flex;align-items:baseline;gap:16px;margin-bottom:0.5rem;padding-bottom:0.4rem;border-bottom:1px solid rgba(142,163,190,0.18);">
+		<span style="font-family:'Rajdhani',sans-serif;font-size:2rem;font-weight:700;color:#e7eef8;letter-spacing:0.02em;">DASHBOARD DE ABASTECIMENTO</span>
+		<span style="font-size:0.88rem;color:#8ea3be;font-family:'Space Grotesk',sans-serif;">Análise completa da frota &nbsp;•&nbsp; {filtro_ctx}</span>
+		</div>""",
+		unsafe_allow_html=True,
+	)
+
 	render_kpi_cards(kpis)
 	st.caption(
-		f"Valores monetarios exibidos com desconto contratual de {discount_rate * 100:.2f}% aplicado sobre o valor bruto do abastecimento."
+		f"Valores com desconto contratual de {discount_rate * 100:.2f}% aplicado sobre o valor bruto."
 	)
-	monthly_scope = apply_filters(df_real, selected_ano, selected_mes, selected_secretaria, selected_combustivel)
-	# Para o gráfico anual, ignorar o filtro de ano para mostrar todos os anos
-	anual_scope = apply_filters(df_real, "Todos", selected_mes, selected_secretaria, selected_combustivel)
-	col_ano, col_mes = st.columns([1, 2])
-	col_ano.plotly_chart(make_bar_gasto_por_ano(anual_scope, selected_secretaria, selected_combustivel), use_container_width=True, key="bar_gasto_ano")
-	col_mes.plotly_chart(make_bar_gasto_por_mes_unificado(monthly_scope, selected_secretaria, selected_combustivel), use_container_width=True, key="bar_gasto_mes_unificado")
-	st.plotly_chart(make_bar_consumo_tipo_mes(filtered), use_container_width=True, key="bar_combustivel")
-	line_col, donut_col = st.columns([2, 1])
-	line_col.plotly_chart(make_line_custo_medio_mes_combustivel(filtered), use_container_width=True, key="line_custo_medio_mes_combustivel")
-	donut_col.plotly_chart(make_donut_combustivel(filtered), use_container_width=True, key="donut_combustivel")
-	st.plotly_chart(
-		make_line_real_previsto_projecao(
-			filtered,
-			limits_scope,
-			usar_limite_quinzenal_secretaria=selected_secretaria != "Todas",
-		),
-		use_container_width=True,
-	)
-	st.plotly_chart(make_bar_consumo_secretaria(status, df_limits), use_container_width=True)
+
+	tab_fin, tab_con, tab_sec, tab_vei = st.tabs(["📊 Financeiro", "⛽ Consumo", "🏢 Secretarias", "🚗 Veículos"])
+
+	with tab_fin:
+		st.markdown('<p class="section-title">Visão Geral de Gastos</p>', unsafe_allow_html=True)
+		col_ano, col_mes = st.columns([1, 2])
+		col_ano.plotly_chart(
+			make_bar_gasto_por_ano(anual_scope, selected_secretaria, selected_combustivel),
+			use_container_width=True, key="bar_gasto_ano",
+		)
+		col_mes.plotly_chart(
+			make_bar_gasto_por_mes_unificado(filtered, selected_secretaria, selected_combustivel),
+			use_container_width=True, key="bar_gasto_mes_unificado",
+		)
+		st.markdown('<p class="section-title">Gasto por Tipo de Combustível e Mês</p>', unsafe_allow_html=True)
+		bar_col, donut_col = st.columns([2, 1])
+		bar_col.plotly_chart(make_bar_consumo_tipo_mes(filtered), use_container_width=True, key="bar_combustivel_fin")
+		donut_col.plotly_chart(make_donut_combustivel_valor(filtered), use_container_width=True, key="donut_combustivel_valor")
+		st.markdown('<p class="section-title">Realizado vs Previsto e Projeção</p>', unsafe_allow_html=True)
+		st.plotly_chart(
+			make_line_real_previsto_projecao(
+				filtered,
+				limits_scope,
+				usar_limite_quinzenal_secretaria=selected_secretaria != "Todas",
+			),
+			use_container_width=True,
+			key="line_real_previsto",
+		)
+		st.markdown('<p class="section-title">Gasto em R$ vs. Limite por Secretaria</p>', unsafe_allow_html=True)
+		st.plotly_chart(
+			make_bar_valor_vs_limite_secretaria(status),
+			use_container_width=True,
+			key="bar_valor_limite_sec",
+		)
+
+	with tab_con:
+		st.markdown('<p class="section-title">Consumo por Tipo de Combustível e Mês (Litros)</p>', unsafe_allow_html=True)
+		bar_con_col, donut_con_col = st.columns([2, 1])
+		bar_con_col.plotly_chart(make_bar_consumo_tipo_mes_litros(filtered), use_container_width=True, key="bar_combustivel_litros")
+		donut_con_col.plotly_chart(make_donut_combustivel(filtered), use_container_width=True, key="donut_combustivel")
+		st.markdown('<p class="section-title">Consumo por Combustível por Mês (Litros)</p>', unsafe_allow_html=True)
+		st.plotly_chart(
+			make_line_custo_medio_mes_combustivel(filtered),
+			use_container_width=True, key="line_custo_medio",
+		)
+		st.markdown('<p class="section-title">Limite de Litros por Secretaria e Combustível</p>', unsafe_allow_html=True)
+		st.plotly_chart(
+			make_bar_litros_vs_limite_secretaria(filtered, df_limits),
+			use_container_width=True, key="bar_litros_limite_sec",
+		)
+
+
+	with tab_sec:
+		st.markdown('<p class="section-title">Ranking de Consumo por Secretaria</p>', unsafe_allow_html=True)
+		st.plotly_chart(make_bar_consumo_secretaria(status, df_limits), use_container_width=True, key="bar_sec")
+		# Tabela de alertas detalhada
+		if not excedidas.empty:
+			st.markdown('<p class="section-title">🔴 Secretarias com Limite Excedido</p>', unsafe_allow_html=True)
+			cols_show = [c for c in ("secretaria", "gasto_valor", "limite_valor_periodo", "desvio_pct", "desvio_valor") if c in excedidas.columns]
+			st.dataframe(excedidas[cols_show].rename(columns={
+				"secretaria": "Secretaria",
+				"gasto_valor": "Gasto (R$)",
+				"limite_valor_periodo": "Limite (R$)",
+				"desvio_pct": "Desvio (%)",
+				"desvio_valor": "Desvio (R$)",
+			}), use_container_width=True)
+
+	with tab_vei:
+		st.markdown('<p class="section-title">Análise por Veículo</p>', unsafe_allow_html=True)
+		if placa_col:
+			top_vei = (
+				filtered.groupby(placa_col, as_index=False)
+				.agg(total_valor=("valor", "sum"), total_litros=("litros", "sum"), abastecimentos=("valor", "count"))
+				.sort_values("total_valor", ascending=False)
+				.head(20)
+			)
+			st.plotly_chart(
+				go.Figure(go.Bar(
+					y=top_vei[placa_col],
+					x=top_vei["total_valor"],
+					orientation="h",
+					marker_color="#2563eb",
+					text=[f"R$ {v:,.0f}" for v in top_vei["total_valor"]],
+					textposition="outside",
+					textfont={"color": "#fff", "size": 13},
+				)).update_layout(
+					template="plotly_dark",
+					title="Top 20 Veículos por Gasto (R$)",
+					yaxis={"categoryorder": "total ascending"},
+					margin={"l": 100, "r": 40, "t": 60, "b": 30},
+					height=max(400, 35 * len(top_vei)),
+				),
+				use_container_width=True,
+				key="bar_veiculos",
+			)
+			st.dataframe(
+				top_vei.rename(columns={
+					placa_col: "Veículo/Placa",
+					"total_valor": "Valor Total (R$)",
+					"total_litros": "Litros",
+					"abastecimentos": "Abastecimentos",
+				}),
+				use_container_width=True,
+			)
+		else:
+			st.info(
+				"⚙️ Esta seção está em desenvolvimento.\n\n"
+				"Para ativar, adicione a coluna **`placa`** ou **`veiculo`** na base de dados "
+				"importada pelo `convert_relatorio_to_sqlite.py`."
+			)
 
 if __name__ == "__main__":
 	run_dashboard()
