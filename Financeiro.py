@@ -1,9 +1,15 @@
 import pandas as pd
 import plotly.graph_objects as go
 
-def make_bar_gasto_por_mes_unificado(df_filtered: pd.DataFrame) -> go.Figure:
+def make_bar_gasto_por_mes_unificado(
+	df_filtered: pd.DataFrame,
+	selected_secretaria: str = "Todas",
+	selected_combustivel: str = "Todos"
+) -> go.Figure:
 	"""
 	Gráfico mensal sem duplicidade de meses, com labels corrigidos e dados agregados.
+	Se selected_secretaria for diferente de 'Todas', a meta mensal será o empenho da secretaria filtrada dividido por 12.
+	O filtro de combustível também é considerado na filtragem dos dados.
 	"""
 	value_mix, monthly_totals = build_monthly_mix(df_filtered)
 	fig = go.Figure()
@@ -32,7 +38,11 @@ def make_bar_gasto_por_mes_unificado(df_filtered: pd.DataFrame) -> go.Figure:
 	config_path = Path(__file__).resolve().parent / "config.json"
 	with config_path.open("r", encoding="utf-8") as f:
 		config = json.load(f)
-	valor_empenhado = sum(float(sec.get("empenho_2026", 0.0)) for sec in config.get("secretarias", []))
+	if selected_secretaria and selected_secretaria != "Todas":
+		secretaria = next((sec for sec in config.get("secretarias", []) if sec.get("sigla", "").upper() == selected_secretaria.upper()), None)
+		valor_empenhado = float(secretaria.get("empenho_2026", 0.0)) if secretaria else 0.0
+	else:
+		valor_empenhado = sum(float(sec.get("empenho_2026", 0.0)) for sec in config.get("secretarias", []))
 	meta_mensal = valor_empenhado / 12 if valor_empenhado else 0
 
 	agrupado["azul"] = agrupado["valor_total_mes"].clip(upper=meta_mensal)
@@ -1717,8 +1727,8 @@ def run_dashboard() -> None:
 	st.caption(
 		f"Valores monetarios exibidos com desconto contratual de {discount_rate * 100:.2f}% aplicado sobre o valor bruto do abastecimento."
 	)
-	monthly_scope = apply_filters(df_real, selected_ano, selected_mes, selected_secretaria, "Todos")
-	st.plotly_chart(make_bar_gasto_por_mes_unificado(monthly_scope), use_container_width=True, key="bar_gasto_mes_unificado")
+	monthly_scope = apply_filters(df_real, selected_ano, selected_mes, selected_secretaria, selected_combustivel)
+	st.plotly_chart(make_bar_gasto_por_mes_unificado(monthly_scope, selected_secretaria, selected_combustivel), use_container_width=True, key="bar_gasto_mes_unificado")
 	st.plotly_chart(make_bar_consumo_tipo_mes(filtered), use_container_width=True, key="bar_combustivel")
 	line_col, donut_col = st.columns([2, 1])
 	line_col.plotly_chart(make_line_custo_medio_mes_combustivel(filtered), use_container_width=True, key="line_custo_medio_mes_combustivel")
