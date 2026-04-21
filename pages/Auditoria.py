@@ -236,9 +236,6 @@ def renderizar_painel_executivo(resultado_auditoria: dict, sqlite_info: dict):
     total_placas = int(res_exec.get('total_placas', 0))
     placas_criticas = int(df_ocs[df_ocs.get('gravidade_final') == 'ALTA']['placa'].nunique()) if not df_ocs.empty and 'gravidade_final' in df_ocs.columns and 'placa' in df_ocs.columns else 0
 
-    st.subheader("Painel Executivo")
-    st.caption("Visao consolidada do recorte atual, com destaque para riscos que exigem atencao imediata.")
-
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.metric("Ocorrencias ALTA", f"{n_alta}", delta=f"{placas_criticas} placa(s) critica(s)")
@@ -251,219 +248,6 @@ def renderizar_painel_executivo(resultado_auditoria: dict, sqlite_info: dict):
     with c4:
         st.metric("Base auditada", f"{total_registros}", delta=f"{total_placas} placa(s)")
         st.caption(f"{total_ocorrencias} ocorrencia(s)")
-
-    if sqlite_info:
-        st.caption(
-            f"Banco ativo: {sqlite_info.get('db_path', '')} | tabela: {sqlite_info.get('table_name', '')} | "
-            f"registros gravados: {sqlite_info.get('rows_written', 0)}"
-        )
-
-    if n_alta > 0 and not df_ocs.empty:
-        st.markdown("#### Casos ALTA para acao imediata")
-        altas_df = df_ocs[df_ocs['gravidade_final'] == 'ALTA'].head(3)
-        cols_altas = st.columns(len(altas_df)) if len(altas_df) <= 3 else st.columns(3)
-        for coluna, (_, linha) in zip(cols_altas, altas_df.iterrows()):
-            with coluna:
-                with st.container(border=True):
-                    st.caption(f"{linha.get('codigo_regra', '-')} • {linha.get('data_hora', '')}")
-                    st.markdown(f"**{linha.get('placa', '-')} • {linha.get('condutor', '-')}**")
-                    st.write(linha.get('descricao_tecnica', 'Sem descricao tecnica.'))
-                    st.caption(linha.get('evidencia', 'Sem evidencia consolidada.'))
-    else:
-        st.success("Nenhum caso ALTA no recorte atual. O painel pode ser lido como controle preventivo.")
-
-
-def renderizar_pagina_indicadores(filtered_df: pd.DataFrame, resultado_auditoria: dict, sqlite_info: dict, show_header: bool = True):
-    if show_header:
-        st.subheader("Indicadores Gerenciais")
-        st.caption("Visao complementar do recorte com foco em eficiencia, custo e concentracao operacional.")
-
-    def _fmt_int(value):
-        return f"{int(value):,}".replace(',', '.')
-
-    def _fmt_dec(value, decimals=1):
-        if pd.isna(value):
-            return '-'
-        return f"{float(value):,.{decimals}f}".replace(',', 'X').replace('.', ',').replace('X', '.')
-
-    def _fmt_money(value):
-        if pd.isna(value):
-            return '-'
-        return f"R$ {float(value):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
-
-    df_base = filtered_df.copy() if filtered_df is not None else pd.DataFrame()
-    df_ocs = pd.DataFrame(resultado_auditoria.get('ocorrencias', []) or [])
-
-    litros_num = pd.to_numeric(df_base.get('litros', pd.Series(dtype='float')), errors='coerce') if not df_base.empty else pd.Series(dtype='float')
-    km_num = pd.to_numeric(df_base.get('km', pd.Series(dtype='float')), errors='coerce') if not df_base.empty else pd.Series(dtype='float')
-    consumo_num = pd.to_numeric(df_base.get('consumo', pd.Series(dtype='float')), errors='coerce') if not df_base.empty else pd.Series(dtype='float')
-
-    total_registros = len(df_base)
-    total_litros = litros_num.sum()
-    total_km = km_num.sum()
-    consumo_medio = consumo_num.mean()
-    litros_medio = litros_num.mean()
-    total_placas = df_base['Placa'].nunique() if not df_base.empty and 'Placa' in df_base.columns else 0
-    placas_risco = df_ocs['placa'].nunique() if not df_ocs.empty and 'placa' in df_ocs.columns else 0
-    total_ocorrencias = len(df_ocs)
-    taxa_ocorrencia = (total_ocorrencias / total_registros * 100) if total_registros else 0
-    taxa_placas_risco = (placas_risco / total_placas * 100) if total_placas else 0
-    media_abastecimentos_placa = (total_registros / total_placas) if total_placas else 0
-
-    valor_col = first_existing_column(df_base, ['valor_total', 'valor', 'total', 'vl_total']) if not df_base.empty else None
-    total_valor = pd.to_numeric(df_base.get(valor_col, pd.Series(dtype='float')), errors='coerce').sum() if valor_col else np.nan
-    custo_litro = (total_valor / total_litros) if (not pd.isna(total_valor) and total_litros) else np.nan
-    custo_registro = (total_valor / total_registros) if (not pd.isna(total_valor) and total_registros) else np.nan
-
-    multiplos_mesmo_dia = 0
-    sequenciais_1h = 0
-    if not df_base.empty and {'Placa', 'data'}.issubset(df_base.columns):
-        alerta_df = df_base[['Placa', 'data']].copy()
-        alerta_df['data'] = pd.to_datetime(alerta_df['data'], errors='coerce')
-        alerta_df = alerta_df.dropna(subset=['data'])
-        if not alerta_df.empty:
-            alerta_df = alerta_df.sort_values(['Placa', 'data'])
-            alerta_df['data_dia'] = alerta_df['data'].dt.date
-            freq = alerta_df.groupby(['Placa', 'data_dia']).size().reset_index(name='qtd')
-            multiplos_mesmo_dia = int((freq['qtd'] >= 2).sum())
-            alerta_df['delta_min'] = alerta_df.groupby('Placa')['data'].diff().dt.total_seconds().div(60)
-            sequenciais_1h = int(((alerta_df['delta_min'].notna()) & (alerta_df['delta_min'] < 60)).sum())
-
-    st.info(f"{taxa_ocorrencia:.1f}% dos registros com ocorrencia")
-    st.caption("Indicadores operacionais do recorte atual: eficiencia, custo e concentracao de alertas.")
-
-    i1, i2, i3 = st.columns(3)
-    with i1:
-        st.metric("KM rodados", _fmt_dec(total_km, 0), delta=f"Consumo medio: {_fmt_dec(consumo_medio, 2)} km/l")
-        st.metric("Placas com ocorrencia", f"{taxa_placas_risco:.1f}%", delta=f"{placas_risco} de {total_placas}")
-    with i2:
-        st.metric("Vol. medio por evento", f"{_fmt_dec(litros_medio, 1)} L", delta=f"Total: {_fmt_dec(total_litros, 0)} L")
-        st.metric("Alertas de frequencia", f"{multiplos_mesmo_dia + sequenciais_1h}", delta=f"{multiplos_mesmo_dia} dia, {sequenciais_1h} <1h")
-    with i3:
-        st.metric("Custo por litro", _fmt_money(custo_litro) if not pd.isna(custo_litro) else '-', delta=f"Ticket: {_fmt_money(custo_registro) if not pd.isna(custo_registro) else '-'}")
-        st.metric("Abast. por placa", _fmt_dec(media_abastecimentos_placa, 1), delta=f"{total_registros} eventos")
-
-    st.markdown("#### Concentracao Operacional")
-    st.caption("Graficos apenas com recortes complementares ao painel executivo: distribuicao de uso por posto, unidade e modelo.")
-
-    g1, g2, g3 = st.columns(3)
-
-    with g1:
-        posto_col = first_existing_column(df_base, ['posto', 'Posto', 'estabelecimento']) if not df_base.empty else None
-        if posto_col:
-            top_postos = (
-                df_base[posto_col]
-                .fillna('Sem posto')
-                .astype(str)
-                .value_counts()
-                .head(8)
-                .rename_axis('posto')
-                .reset_index(name='abastecimentos')
-            )
-            fig_posto = px.bar(
-                top_postos,
-                x='abastecimentos',
-                y='posto',
-                orientation='h',
-                title='Postos Mais Utilizados',
-                color='abastecimentos',
-                color_continuous_scale=[[0, '#cfe8ff'], [1, '#2563eb']],
-            )
-            fig_posto.update_layout(
-                yaxis_title='',
-                xaxis_title='Abastecimentos',
-                coloraxis_showscale=False,
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(248,250,252,0.78)',
-                margin=dict(l=8, r=8, t=44, b=8),
-            )
-            fig_posto.update_yaxes(categoryorder='total ascending')
-            st.plotly_chart(fig_posto, use_container_width=True)
-        else:
-            st.info("Sem coluna de posto/estabelecimento para ranking operacional.")
-
-    with g2:
-        unidade_col = first_existing_column(df_base, ['unidade', 'Unidade']) if not df_base.empty else None
-        if unidade_col:
-            unidade_df = (
-                df_base.groupby(unidade_col, dropna=False)
-                .agg(
-                    abastecimentos=(unidade_col, 'size'),
-                    litros=('litros', 'sum'),
-                    placas=('Placa', 'nunique') if 'Placa' in df_base.columns else (unidade_col, 'size'),
-                )
-                .reset_index()
-                .rename(columns={unidade_col: 'unidade'})
-                .sort_values('abastecimentos', ascending=False)
-                .head(8)
-            )
-            fig_unidade = px.bar(
-                unidade_df,
-                x='abastecimentos',
-                y='unidade',
-                orientation='h',
-                title='Unidades com Mais Abastecimentos',
-                hover_data=['litros', 'placas'],
-                color='litros',
-                color_continuous_scale=[[0, '#dcfce7'], [1, '#16a34a']],
-            )
-            fig_unidade.update_layout(
-                yaxis_title='',
-                xaxis_title='Abastecimentos',
-                coloraxis_showscale=False,
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(248,250,252,0.78)',
-                margin=dict(l=8, r=8, t=44, b=8),
-            )
-            fig_unidade.update_yaxes(categoryorder='total ascending')
-            st.plotly_chart(fig_unidade, use_container_width=True)
-        else:
-            st.info("Sem coluna de unidade para analise por area responsavel.")
-
-    with g3:
-        if not df_base.empty and 'Modelo' in df_base.columns:
-            modelo_df = df_base.copy()
-            modelo_df['litros'] = pd.to_numeric(modelo_df.get('litros', np.nan), errors='coerce')
-            modelo_df['consumo'] = pd.to_numeric(modelo_df.get('consumo', np.nan), errors='coerce')
-            modelo_agg = (
-                modelo_df.groupby('Modelo', dropna=False)
-                .agg(
-                    abastecimentos=('Modelo', 'size'),
-                    litros=('litros', 'sum'),
-                    consumo_medio=('consumo', 'mean'),
-                    placas=('Placa', 'nunique') if 'Placa' in modelo_df.columns else ('Modelo', 'size'),
-                )
-                .reset_index()
-                .sort_values('abastecimentos', ascending=False)
-                .head(8)
-            )
-            fig_modelo = px.bar(
-                modelo_agg,
-                x='abastecimentos',
-                y='Modelo',
-                orientation='h',
-                title='Modelos Mais Utilizados',
-                hover_data=['litros', 'consumo_medio', 'placas'],
-                color='consumo_medio',
-                color_continuous_scale=[[0, '#fde68a'], [1, '#d97706']],
-            )
-            fig_modelo.update_layout(
-                yaxis_title='',
-                xaxis_title='Abastecimentos',
-                coloraxis_showscale=False,
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(248,250,252,0.78)',
-                margin=dict(l=8, r=8, t=44, b=8),
-            )
-            fig_modelo.update_yaxes(categoryorder='total ascending')
-            st.plotly_chart(fig_modelo, use_container_width=True)
-        else:
-            st.info("Sem dados suficientes para consolidado por modelo.")
-
-    if not pd.isna(total_valor):
-        st.caption(
-            f"Financeiro: total abastecido {_fmt_money(total_valor)} | ticket medio {_fmt_money(custo_registro)} | custo medio por litro {_fmt_money(custo_litro)}"
-        )
 
 
 def renderizar_manual_no_dashboard(manual_data: dict):
@@ -1129,6 +913,17 @@ def apply_filters(df, filtros, fuel_map):
     ano_filter = filtros.get('ano', 'Todos')
     if ano_filter and ano_filter != 'Todos' and 'ano' in base_df.columns:
         base_df = base_df[base_df['ano'].astype(str) == str(ano_filter)]
+
+    mes_filter = filtros.get('mes', 'Todos')
+    if mes_filter and mes_filter != 'Todos' and 'mes' in base_df.columns:
+        _MONTHS_LOCAL = {
+            1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+            5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+            9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
+        }
+        _num = {v: k for k, v in _MONTHS_LOCAL.items()}.get(mes_filter)
+        if _num is not None:
+            base_df = base_df[base_df['mes'].astype(int) == _num]
 
     fuel_filter = filtros.get('fuel', 'Todos')
     if 'combustivel_norm' in base_df.columns and fuel_filter in fuel_map:
@@ -2351,8 +2146,163 @@ def preparar_df_dashboard(_df_internal):
 # CONFIGURAÇÃO E SETUP
 # ═════════════════════════════════════════════════════════════════
 
-st.set_page_config(page_title="Frota Inteligente", layout="wide")
-st.title("📊 Dashboard Frota Inteligente")
+st.set_page_config(
+    page_title="Auditoria de Frota",
+    page_icon="🔍",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# Bloqueia tradutores automáticos do browser (causa do NotFoundError React)
+st_components.html(
+    """
+    <script>
+    (function() {
+        var r = window.parent.document.documentElement;
+        r.setAttribute('translate', 'no');
+        r.setAttribute('lang', 'pt-BR');
+        var m = window.parent.document.createElement('meta');
+        m.name = 'google'; m.content = 'notranslate';
+        window.parent.document.head.appendChild(m);
+    })();
+    </script>
+    """,
+    height=0,
+)
+
+# ── Injeta o mesmo CSS do Financeiro para identidade visual consistente ──
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&family=Space+Grotesk:wght@400;500;700&display=swap');
+
+    #MainMenu, footer { display: none !important; }
+
+    header[data-testid="stHeader"] {
+        background: transparent !important;
+        border-bottom: 0 !important;
+    }
+
+    div[data-testid="stDecoration"] { height: 0 !important; }
+
+    .stApp {
+        background:
+            radial-gradient(circle at 20% -10%, rgba(56,189,248,0.20), transparent 35%),
+            radial-gradient(circle at 90% 0%, rgba(45,212,191,0.16), transparent 30%),
+            #0a121b;
+        color: #e7eef8;
+        font-family: 'Space Grotesk', sans-serif;
+    }
+
+    section[data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0f1826 0%, #0a121b 100%);
+        border-right: 1px solid rgba(142,163,190,0.15);
+    }
+
+    section[data-testid="stSidebar"] h1,
+    section[data-testid="stSidebar"] h2,
+    section[data-testid="stSidebar"] h3,
+    section[data-testid="stSidebar"] h4,
+    section[data-testid="stSidebar"] p,
+    section[data-testid="stSidebar"] label,
+    section[data-testid="stSidebar"] .stMarkdown,
+    section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] {
+        color: #dbe7f5 !important;
+        opacity: 1 !important;
+    }
+
+    section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p {
+        color: #c9d8ea !important;
+        font-weight: 600 !important;
+    }
+
+    .block-container {
+        padding-top: 0.35rem;
+        padding-bottom: 1.2rem;
+        max-width: 1600px;
+    }
+
+    .section-title {
+        font-family: 'Rajdhani', 'Space Grotesk', sans-serif;
+        font-size: 1.5rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        margin: 1.1rem 0 0.15rem 0;
+        padding-bottom: 0.3rem;
+        border-bottom: 1px solid rgba(56,189,248,0.18);
+        color: #e7eef8;
+    }
+
+    div[data-testid="stDataFrame"] {
+        border: 1px solid rgba(142,163,190,0.20);
+        border-radius: 10px;
+        overflow: hidden;
+    }
+
+    .sidebar-brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 8px 0 14px 0;
+        border-bottom: 1px solid rgba(142,163,190,0.18);
+        margin-bottom: 6px;
+    }
+    .sidebar-brand-icon { font-size: 2rem; line-height: 1; }
+    .sidebar-brand-title {
+        font-family: 'Rajdhani', sans-serif;
+        font-size: 1.15rem;
+        font-weight: 700;
+        color: #e7eef8;
+        line-height: 1.1;
+        letter-spacing: 0.04em;
+    }
+    .sidebar-brand-sub {
+        font-size: 0.7rem;
+        color: #8ea3be;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+    }
+    .sidebar-section {
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        color: #8ea3be;
+        text-transform: uppercase;
+        margin: 14px 0 8px 0;
+        padding-bottom: 4px;
+        border-bottom: 1px solid rgba(142,163,190,0.18);
+    }
+    .sidebar-footer {
+        font-size: 0.68rem;
+        color: #8ea3be;
+        margin-top: 10px;
+        padding-top: 8px;
+        border-top: 1px solid rgba(142,163,190,0.15);
+    }
+    .alert-card {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 9px 12px;
+        border-radius: 8px;
+        margin-bottom: 7px;
+        background: rgba(10, 18, 27, 0.85);
+        border: 1px solid rgba(142,163,190,0.12);
+    }
+    .alert-card.alert-red    { border-left: 4px solid #ef4444; }
+    .alert-card.alert-yellow { border-left: 4px solid #eab308; }
+    .alert-card.alert-green  { border-left: 4px solid #22c55e; }
+    .alert-icon { font-size: 1.4rem; line-height: 1; }
+    .alert-body { display: flex; flex-direction: column; gap: 1px; }
+    .alert-count-red    { font-family:'Rajdhani',sans-serif; font-size:1.3rem; font-weight:700; color:#ef4444; line-height:1; }
+    .alert-count-yellow { font-family:'Rajdhani',sans-serif; font-size:1.3rem; font-weight:700; color:#eab308; line-height:1; }
+    .alert-count-green  { font-family:'Rajdhani',sans-serif; font-size:1.3rem; font-weight:700; color:#22c55e; line-height:1; }
+    .alert-label { font-size: 0.75rem; color: #c9d8ea; }
+    .alert-detail { font-size: 0.65rem; color: #8ea3be; line-height: 1.5; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # Inicializar session_state
 if 'df_filtrado' not in st.session_state:
@@ -2370,8 +2320,7 @@ if 'active_db_path' not in st.session_state:
 if 'filtros_ui' not in st.session_state:
     st.session_state.filtros_ui = {
         'ano': 'Todos',
-        'fuel': 'Todos',
-        'unidade': 'Todas',
+        'mes': 'Todos',
         'marca': 'Todos',
         'modelo': 'Todos',
         'condutor': 'Todos',
@@ -2461,11 +2410,16 @@ info_hist = st.session_state.info_hist_cache
 if info_hist.get('db_path'):
     st.session_state.active_db_path = info_hist.get('db_path')
 
-# ═════════════════════════════════════════════════════════════════
-# PAINEL DE FONTE DE DADOS ATIVA
-# ═════════════════════════════════════════════════════════════════
-
-show_data_source_panel(info_hist)
+# ── Cabeçalho principal no estilo do Financeiro ──
+_ano_ctx = st.session_state.filtros_ui.get('ano', 'Todos')
+_filtro_ctx = _ano_ctx if _ano_ctx != 'Todos' else 'Todos os anos'
+st.markdown(
+    f'<div style="display:flex;align-items:baseline;gap:16px;margin-bottom:0.5rem;padding-bottom:0.4rem;border-bottom:1px solid rgba(142,163,190,0.18);">'
+    f'<span style="font-family:\'Rajdhani\',sans-serif;font-size:2rem;font-weight:700;color:#e7eef8;letter-spacing:0.02em;">AUDITORIA DE ABASTECIMENTO</span>'
+    f'<span style="font-size:0.88rem;color:#8ea3be;font-family:\'Space Grotesk\',sans-serif;">Análise inteligente da frota &nbsp;•&nbsp; {_filtro_ctx}</span>'
+    f'</div>',
+    unsafe_allow_html=True,
+)
 
 if df_hist is None or df_hist.empty:
     st.warning("Nenhum dado processado ainda. Tente recarregar a página.")
@@ -2480,6 +2434,13 @@ if df.empty:
 # SEÇÃO DE FILTROS
 # ═════════════════════════════════════════════════════════════════
 
+_MONTHS = {
+    1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+    5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+    9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
+}
+_MONTH_NAME_TO_NUMBER = {v: k for k, v in _MONTHS.items()}
+
 fuel_map = {
     'Gasolina': 'gasolina',
     'Alcool': 'alcool',
@@ -2493,6 +2454,7 @@ anos_disponiveis = ["Todos"] + sorted(
 ) if 'ano' in df.columns else ["Todos"]
 fuel_options = ["Todos"] + sorted(df['combustivel'].dropna().unique().tolist()) if 'combustivel' in df.columns else ["Todos", "Gasolina", "Alcool", "DIESEL S10"]
 unidade_options = ["Todas"] + sorted(df['unidade_alerta'].dropna().astype(str).unique().tolist()) if 'unidade_alerta' in df.columns else ["Todas"]
+meses_disponiveis = ["Todos"] + [_MONTHS[m] for m in sorted(_MONTHS.keys())]
 marca_options = ["Todos"] + sorted(df['Marca'].dropna().astype(str).unique().tolist()) if 'Marca' in df.columns else ["Todos"]
 cond_options = ["Todos"] + sorted(df['Condutor'].dropna().astype(str).unique().tolist())
 placa_options = ["Todos"] + sorted(df['Placa'].dropna().astype(str).unique().tolist())
@@ -2511,13 +2473,26 @@ _ano_default = filtros_ui.get('ano', str(datetime.now().year))
 _ano_idx = anos_disponiveis.index(_ano_default) if _ano_default in anos_disponiveis else 0
 
 with st.sidebar:
-    with st.expander("🔍 Filtros", expanded=True):
+    # ── Brand ──
+    st.markdown(
+        """
+        <div class="sidebar-brand">
+            <span class="sidebar-brand-icon">🔍</span>
+            <div>
+                <div class="sidebar-brand-title">AUDITORIA DE FROTA</div>
+                <div class="sidebar-brand-sub">Sistema Multiagente</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("🔍 Filtros", expanded=False):
         selected_ano = st.selectbox("Ano", anos_disponiveis, index=_ano_idx, key="aud_sel_ano")
-        selected_fuel = st.selectbox("Combustível", fuel_options, index=safe_index(fuel_options, filtros_ui.get('fuel', 'Todos')), key="aud_sel_fuel")
-        selected_unidade = st.selectbox("Unidade / Secretaria", unidade_options, index=safe_index(unidade_options, filtros_ui.get('unidade', 'Todas')), key="aud_sel_unidade")
+        selected_mes = st.selectbox("Mês", meses_disponiveis, index=safe_index(meses_disponiveis, filtros_ui.get('mes', 'Todos')), key="aud_sel_mes")
         selected_marca = st.selectbox("Marca", marca_options, index=safe_index(marca_options, filtros_ui.get('marca', 'Todos')), key="aud_sel_marca")
         selected_modelo = st.selectbox("Modelo", modelo_options, index=safe_index(modelo_options, filtros_ui.get('modelo', 'Todos')), key="aud_sel_modelo")
-        selected_condutor = st.selectbox("Condutor", cond_options, index=safe_index(cond_options, filtros_ui.get('condutor', 'Todos')), key="aud_sel_condutor")
+        selected_condutor = st.selectbox("Motorista", cond_options, index=safe_index(cond_options, filtros_ui.get('condutor', 'Todos')), key="aud_sel_condutor")
         selected_placa = st.selectbox("Placa", placa_options, index=safe_index(placa_options, filtros_ui.get('placa', 'Todos')), key="aud_sel_placa")
         sigma_mult = st.slider(
             "Sensibilidade de Outlier (σ)",
@@ -2532,18 +2507,25 @@ with st.sidebar:
         with col_lim:
             if st.button("🗑️ Limpar", use_container_width=True):
                 st.session_state.filtros_ui = {
-                    'ano': 'Todos', 'fuel': 'Todos', 'unidade': 'Todas',
-                    'marca': 'Todos', 'modelo': 'Todos', 'condutor': 'Todos', 'placa': 'Todos',
+                    'ano': 'Todos', 'mes': 'Todos', 'marca': 'Todos',
+                    'modelo': 'Todos', 'condutor': 'Todos', 'placa': 'Todos',
                 }
                 st.session_state.resultado_processado = None
                 st.rerun()
+
+    # ── Rodapé da sidebar ──
+    _data_max_aud = pd.to_datetime(df['data'], errors='coerce').max() if 'data' in df.columns and not df.empty else None
+    _ultima_aud = _data_max_aud.strftime('%d/%m/%Y') if _data_max_aud is not None and not pd.isna(_data_max_aud) else '—'
+    st.markdown(
+        f'<div class="sidebar-footer">🕐 Última atualização: <b>{_ultima_aud}</b><br>Base: {RELATORIO_DB.name}</div>',
+        unsafe_allow_html=True,
+    )
 
 if aplicar_filtros:
     st.session_state.outlier_sigma_mult = float(sigma_mult)
     st.session_state.filtros_ui = {
         'ano': selected_ano,
-        'fuel': selected_fuel,
-        'unidade': selected_unidade,
+        'mes': selected_mes,
         'marca': selected_marca,
         'modelo': selected_modelo,
         'condutor': selected_condutor,
@@ -2575,10 +2557,15 @@ if aplicar_filtros:
             analise_limitada = False
             filtered_df_analise = filtered_df_submit
 
-            media = filtered_df_analise['consumo'].mean()
-            desvio = filtered_df_analise['consumo'].std()
-            consumo_max = filtered_df_analise['consumo'].max()
-            consumo_min = filtered_df_analise['consumo'].min()
+            # Estatísticas apenas sobre consumo no range válido (0 < consumo <= 100 km/L)
+            # Exclui km zerado (consumo <= 0) e hodômetros absurdos (consumo > 100)
+            _CONSUMO_MAX_VALIDO = 100.0
+            _consumo_serie = pd.to_numeric(filtered_df_analise['consumo'], errors='coerce')
+            _consumo_ok = _consumo_serie[(_consumo_serie > 0) & (_consumo_serie <= _CONSUMO_MAX_VALIDO)].dropna()
+            media = _consumo_ok.mean()
+            desvio = _consumo_ok.std()
+            consumo_max = _consumo_ok.max()
+            consumo_min = _consumo_ok.min()
             sigma_mult = float(st.session_state.get('outlier_sigma_mult', 2.0))
             limiar_outlier = media - (sigma_mult * desvio)
 
@@ -2668,11 +2655,6 @@ if aplicar_filtros:
             freq = alert_df.groupby(['Placa', 'data_dia']).size().reset_index(name='qtd_abastecimentos')
             freq_suspeita = freq[freq['qtd_abastecimentos'] >= 2]
 
-            detalhes_freq = alert_df.merge(
-                freq_suspeita[['Placa', 'data_dia']],
-                on=['Placa', 'data_dia'], how='inner'
-            )
-
             alert_df['delta_min'] = (
                 alert_df.groupby('Placa')['data']
                 .diff().dt.total_seconds().div(60)
@@ -2680,10 +2662,17 @@ if aplicar_filtros:
             alert_df['data_hora_anterior'] = alert_df.groupby('Placa')['data_hora'].shift(1)
             alert_df['posto_anterior'] = alert_df.groupby('Placa')['posto'].shift(1)
             alert_df['litros_anterior'] = alert_df.groupby('Placa')['litros'].shift(1)
-            alert_df['km_anterior'] = alert_df.groupby('Placa')['km'].shift(1)
+            alert_df['km_atual_evento'] = pd.to_numeric(alert_df.get('km_atual_alerta', np.nan), errors='coerce')
+            alert_df['km_atual_evento'] = alert_df['km_atual_evento'].combine_first(pd.to_numeric(alert_df.get('km', np.nan), errors='coerce'))
+            alert_df['km_anterior'] = alert_df.groupby('Placa')['km_atual_evento'].shift(1)
             alert_df['consumo_anterior'] = alert_df.groupby('Placa')['consumo'].shift(1)
             alert_df['sequencia'] = alert_df['ordem_abastecimento'].astype(str).radd('#')
             sequenciais = alert_df[(alert_df['delta_min'].notna()) & (alert_df['delta_min'] < 60)].copy()
+
+            detalhes_freq = alert_df.merge(
+                freq_suspeita[['Placa', 'data_dia']],
+                on=['Placa', 'data_dia'], how='inner'
+            )
 
             resultado_processado['freq_suspeita'] = freq_suspeita
             resultado_processado['detalhes_freq'] = detalhes_freq
@@ -2741,377 +2730,144 @@ if st.session_state.resultado_processado is not None:
         )
 
     aplicar_estilo_relatorio()
-    
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "📊 Resumo Estatístico",
-        "🔍 Auditoria Técnica",
-        "⚠️ Alertas Operacionais",
-        "📈 Timeline",
-        "🗂️ Tabela de Dados",
-        "📘 Manual e Relatórios"
+    st.caption("")
+
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📊 Visão Geral",
+        "🔍 Ocorrências",
+        "⚠️ Alertas & Timeline",
+        "📥 Dados & Relatórios",
     ])
-    
-    # ═════ TAB 1: Resumo Estatístico ═════
+
+    # ══════════════════════════════════════════════════════════════
+    # TAB 1 — Visão Geral: KPIs + dispersão de consumo + outliers
+    # ══════════════════════════════════════════════════════════════
     with tab1:
-        st.markdown("### Visao Executiva")
-        st.caption("Leitura consolidada do recorte atual com prioridades, volumetria e sinais de risco.")
+        # ── Painel executivo dos agentes ─────────────────────────
         renderizar_painel_executivo(resultado_auditoria, sqlite_info)
 
         st.divider()
-        st.markdown("### Indicadores Gerenciais")
-        st.caption("Panorama operacional, financeiro e de concentracao das ocorrencias no recorte filtrado.")
-        renderizar_pagina_indicadores(filtered_df, resultado_auditoria, sqlite_info, show_header=False)
 
-        st.divider()
-        st.markdown("### Analise Estatistica")
-        st.caption("Distribuicao do consumo, parametros de outlier e dispersao dos abastecimentos.")
-        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-        kpi1.metric("Máximo (KM/L)", f"{consumo_max:.2f}")
-        kpi2.metric("Mínimo (KM/L)", f"{consumo_min:.2f}")
-        kpi3.metric("Média (KM/L)", f"{media:.2f}")
-        kpi4.metric("Desvio Padrão", f"{desvio:.2f}")
-        st.caption(
-            f"Regra de outlier: consumo < media - {sigma_mult:.1f}σ | limiar atual: {limiar_outlier:.2f} KM/L"
-        )
+        # ── Estatística + gráfico de dispersão ───────────────────
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Máx (KM/L)", f"{consumo_max:.2f}")
+        c2.metric("Mín (KM/L)", f"{consumo_min:.2f}")
+        c3.metric("Média (KM/L)", f"{media:.2f}")
+        c4.metric("Desvio padrão", f"{desvio:.2f}")
+        st.caption(f"Limiar de outlier: consumo < {limiar_outlier:.2f} km/L  (média − {sigma_mult:.1f}σ)")
 
-        # Gráfico
-        fig = px.scatter(
-            res['df_outliers'], x='consumo', y='litros',
+        # Filtra registros com consumo absurdo antes de plotar
+        _CONSUMO_MAX_VALIDO = 100.0
+        _df_plot = res['df_outliers'].copy()
+        _df_plot['_consumo_num'] = pd.to_numeric(_df_plot['consumo'], errors='coerce')
+        _excluidos_plot = int((_df_plot['_consumo_num'] > _CONSUMO_MAX_VALIDO).sum())
+        _df_plot = _df_plot[(_df_plot['_consumo_num'] > 0) & (_df_plot['_consumo_num'] <= _CONSUMO_MAX_VALIDO)].copy()
+        if _excluidos_plot:
+            st.caption(f"⚠️ {_excluidos_plot} registro(s) com consumo > {_CONSUMO_MAX_VALIDO:.0f} km/L excluídos do gráfico (hodômetro inválido).")
+
+        fig_disp = px.scatter(
+            _df_plot,
+            x='consumo', y='litros',
             color='outlier',
-            color_discrete_map={True: 'red', False: '#38bdf8'},
+            color_discrete_map={True: '#ef4444', False: '#38bdf8'},
             hover_data=['Placa', 'Modelo', 'Condutor', 'consumo', 'litros', 'km', 'data'],
-            title='Dispersão KM/L vs Litros'
+            title='Dispersão KM/L × Litros abastecidos',
+            template='plotly_dark',
         )
-        
-        for vehicle_type, capacity in VEHICLE_TANK_CAPACITIES.items():
-            if not res['modelo_filter'] or any(vehicle_type.lower() in modelo.lower() for modelo in res['modelo_filter']):
-                fig.add_hline(y=capacity, line_dash="dot",
-                             annotation_text=f'{vehicle_type} {capacity}L',
-                             annotation_position="bottom right")
-        
-        fig.update_layout(xaxis_title='KM/L', yaxis_title='Litros')
-        st.plotly_chart(fig, use_container_width=True)
+        for vtype, cap in VEHICLE_TANK_CAPACITIES.items():
+            if not res['modelo_filter'] or any(vtype.lower() in m.lower() for m in res['modelo_filter']):
+                fig_disp.add_hline(y=cap, line_dash='dot',
+                                   annotation_text=f'{vtype} {cap}L',
+                                   annotation_position='bottom right')
+        fig_disp.update_layout(
+            xaxis_title='KM/L', yaxis_title='Litros',
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(15,24,38,0.6)',
+            margin=dict(l=8, r=8, t=40, b=8),
+        )
+        st.plotly_chart(fig_disp, use_container_width=True)
 
-        # Score de Risco em acordeon
-        with st.expander("Score de Risco", expanded=False):
-            col1, col2 = st.columns(2)
-
-            with col1:
-                st.write("**Placas com Outliers:**")
-                if not res['risco_placa'].empty:
-                    for placa, count in res['risco_placa'].items():
-                        st.write(f"  • {placa}: {count} ocorrências")
-                else:
-                    st.info("Nenhuma placa com outliers detectados.")
-
-            with col2:
-                st.write("**Condutores com Outliers:**")
-                if not res['risco_condutor'].empty:
-                    for condutor, count in res['risco_condutor'].items():
-                        st.write(f"  • {condutor}: {count} ocorrências")
-                else:
-                    st.info("Nenhum condutor com outliers detectados.")
-
-        st.divider()
-        st.markdown("### Outliers Detalhados")
-        st.caption("Eventos abaixo do limiar estatistico com evidencias consolidadas para analise e exportacao.")
+        # ── Outliers detalhados (colapsado por padrão) ────────────
         tabela_outliers = res.get('tabela_outliers', pd.DataFrame())
         if not tabela_outliers.empty:
-            cols_2c = [
-                'KM Anterior', 'KM Atual', 'KM Rodados', 'KM Esperado',
-                'KM/L', 'Litros', 'Média', 'Mín', 'Máx', 'Desvio',
-            ]
-            tabela_outliers_view = tabela_outliers.copy()
-            for col in cols_2c:
-                if col in tabela_outliers_view.columns:
-                    tabela_outliers_view[col] = pd.to_numeric(
-                        tabela_outliers_view[col], errors='coerce'
-                    ).round(2)
+            with st.expander(f"🔎 Outliers detalhados — {len(tabela_outliers)} registro(s)", expanded=False):
+                cols_2c = ['KM Anterior','KM Atual','KM Rodados','KM Esperado','KM/L','Litros','Média','Mín','Máx','Desvio']
+                tov = tabela_outliers.copy()
+                for col in cols_2c:
+                    if col in tov.columns:
+                        tov[col] = pd.to_numeric(tov[col], errors='coerce').round(2)
+                render_dataframe_limited(tov)
 
-            # Evita uso de pandas Styler, que pode causar instabilidade de renderizacao no front-end.
-            render_dataframe_limited(tabela_outliers_view)
+                d1, d2 = st.columns(2)
+                csv_ot = tov.to_csv(index=False, sep=';', encoding='utf-8-sig')
+                d1.download_button("📥 CSV", data=csv_ot, file_name="outliers.csv", mime="text/csv", use_container_width=True)
+                xlsx_ot = BytesIO()
+                with pd.ExcelWriter(xlsx_ot, engine='openpyxl') as w:
+                    tov.to_excel(w, index=False, sheet_name='Outliers')
+                xlsx_ot.seek(0)
+                d2.download_button("📥 Excel", data=xlsx_ot.getvalue(), file_name="outliers.xlsx",
+                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                   use_container_width=True)
 
-            csv_outliers = tabela_outliers_view.to_csv(index=False, sep=';', encoding='utf-8-sig')
-            xlsx_buffer = BytesIO()
-            with pd.ExcelWriter(xlsx_buffer, engine='openpyxl') as writer:
-                tabela_outliers_view.to_excel(writer, index=False, sheet_name='Outliers')
-            xlsx_buffer.seek(0)
-
-            b1, b2, b3 = st.columns(3)
-            with b1:
-                st.download_button(
-                    "Exportar Outliers (CSV)",
-                    data=csv_outliers,
-                    file_name="outliers_detalhados.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                )
-            with b2:
-                st.download_button(
-                    "Exportar Outliers (Excel)",
-                    data=xlsx_buffer.getvalue(),
-                    file_name="outliers_detalhados.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
-                )
-            with b3:
-                if st.button("Preparar Outliers (PDF)", key="prep_outliers_pdf", use_container_width=True):
-                    st.session_state.outliers_pdf_bytes = build_outliers_pdf_report(
-                        tabela_outliers_view, sigma_mult, limiar_outlier
-                    )
-                if st.session_state.get('outliers_pdf_bytes'):
-                    st.download_button(
-                        "Exportar Outliers (PDF)",
-                        data=st.session_state.outliers_pdf_bytes,
-                        file_name="outliers_detalhados.pdf",
-                        mime="application/pdf",
-                        use_container_width=True,
-                        key="download_outliers_pdf",
-                    )
-        else:
-            st.info("Nenhum outlier encontrado para os filtros atuais.")
-
-    # ═════ TAB 2: Auditoria Técnica ═════
+    # ══════════════════════════════════════════════════════════════
+    # TAB 2 — Ocorrências: lista dos agentes + ranking de placas
+    # ══════════════════════════════════════════════════════════════
     with tab2:
-        st.subheader("Pipeline de Auditoria Multiagente")
-        st.caption("Visao operacional consolidada das evidencias geradas pelos agentes, com foco em leitura rapida e acao.")
-
         ocs_class = resultado_auditoria.get('ocorrencias', [])
         relatorio_agente = resultado_auditoria.get('relatorio', {})
         notificacoes_agente = resultado_auditoria.get('notificacoes', [])
         res_exec = relatorio_agente.get('resumo_executivo', {})
 
-        resumo1, resumo2, resumo3 = st.columns(3)
-        resumo1.metric("Ocorrencias totais", res_exec.get('total_ocorrencias', 0))
-        resumo2.metric("Placas com risco", len(relatorio_agente.get('ranking_placa', [])))
-        resumo3.metric("Notificacoes prontas", len(notificacoes_agente))
+        r1, r2, r3 = st.columns(3)
+        r1.metric("Ocorrências totais", res_exec.get('total_ocorrencias', 0))
+        r2.metric("Placas com risco", len(relatorio_agente.get('ranking_placa', [])))
+        r3.metric("Notificações prontas", len(notificacoes_agente))
 
-        if sqlite_info:
-            st.caption(
-                f"SQLite: {sqlite_info.get('db_path', '')} | "
-                f"tabela: {sqlite_info.get('table_name', '')} | "
-                f"gravados: {sqlite_info.get('rows_written', 0)}"
-            )
-            if sqlite_info.get('status') == 'ERRO_ESCRITA':
-                st.warning(
-                    "Falha de escrita no SQLite local. "
-                    f"Caminho: {sqlite_info.get('db_path', '')} | "
-                    f"Motivo: {sqlite_info.get('fallback_reason', 'indisponivel')}"
-                )
-
-        # Log
-        with st.expander("📋 Log de Execução do Pipeline"):
+        # Log colapsado
+        with st.expander("📋 Log do pipeline", expanded=False):
             for linha in resultado_auditoria.get('log', []):
                 st.code(linha, language=None)
 
-        # Ocorrências
         if ocs_class:
             df_ocs = pd.DataFrame(ocs_class)
 
-            visao_ocorrencias = st.radio(
-                "Visualização de ocorrências",
+            gravidade_sel = st.radio(
+                "Filtrar gravidade",
                 options=["ALTA", "MÉDIA", "TODAS"],
                 horizontal=True,
                 key="visao_ocorrencias",
             )
-
-            if visao_ocorrencias == "ALTA":
-                altas_df = df_ocs[df_ocs['gravidade_final'] == 'ALTA'].copy()
-                if not altas_df.empty:
-                    cols_numericas = [
-                        'km_anterior', 'km_atual', 'km_rodados', 'km_esperado',
-                        'km_l', 'litros', 'media', 'min', 'max', 'desvio',
-                    ]
-                    for col in cols_numericas:
-                        if col in altas_df.columns:
-                            altas_df[col] = pd.to_numeric(altas_df[col], errors='coerce').round(2)
-
-                    cols_show = [c for c in [
-                        'placa', 'condutor', 'modelo', 'unidade', 'data_hora',
-                        'km_anterior', 'km_atual', 'km_rodados', 'km_esperado',
-                        'km_l', 'litros', 'media', 'min', 'max', 'desvio',
-                        'estabelecimento', 'codigo_regra', 'tipo_ocorrencia',
-                        'descricao_tecnica', 'evidencia', 'gravidade_final',
-                        'qtd_evidencias_evento', 'recomendacao',
-                    ] if c in altas_df.columns]
-                    render_dataframe_limited(
-                        altas_df[cols_show].rename(columns={
-                            'placa': 'Placa', 'condutor': 'Condutor', 'modelo': 'Modelo',
-                            'unidade': 'Unidade', 'data_hora': 'Data/Hora',
-                            'km_anterior': 'KM Anterior', 'km_atual': 'KM Atual', 'km_rodados': 'KM Rodados',
-                            'km_esperado': 'KM Esperado', 'km_l': 'KM/L', 'litros': 'Litros',
-                            'media': 'Média', 'min': 'Mín', 'max': 'Máx', 'desvio': 'Desvio',
-                            'estabelecimento': 'Estabelecimento', 'codigo_regra': 'Código',
-                            'tipo_ocorrencia': 'Tipo', 'descricao_tecnica': 'Descrição',
-                            'evidencia': 'Evidência', 'gravidade_final': 'Gravidade',
-                            'qtd_evidencias_evento': 'Evidências', 'recomendacao': 'Recomendação',
-                        })
-                    )
-                else:
-                    st.success("Nenhuma ocorrência de gravidade ALTA")
-
-            elif visao_ocorrencias == "MÉDIA":
-                medias_df = df_ocs[df_ocs['gravidade_final'] == 'MEDIA'].copy()
-                if not medias_df.empty:
-                    cols_numericas = [
-                        'km_anterior', 'km_atual', 'km_rodados', 'km_esperado',
-                        'km_l', 'litros', 'media', 'min', 'max', 'desvio',
-                    ]
-                    for col in cols_numericas:
-                        if col in medias_df.columns:
-                            medias_df[col] = pd.to_numeric(medias_df[col], errors='coerce').round(2)
-
-                    cols_show = [c for c in [
-                        'placa', 'condutor', 'modelo', 'unidade', 'data_hora',
-                        'km_anterior', 'km_atual', 'km_rodados', 'km_esperado',
-                        'km_l', 'litros', 'media', 'min', 'max', 'desvio',
-                        'codigo_regra', 'tipo_ocorrencia', 'evidencia', 'gravidade_final',
-                    ] if c in medias_df.columns]
-                    render_dataframe_limited(
-                        medias_df[cols_show].rename(columns={
-                            'placa': 'Placa', 'condutor': 'Condutor', 'modelo': 'Modelo',
-                            'unidade': 'Unidade', 'data_hora': 'Data/Hora',
-                            'km_anterior': 'KM Anterior', 'km_atual': 'KM Atual', 'km_rodados': 'KM Rodados',
-                            'km_esperado': 'KM Esperado', 'km_l': 'KM/L', 'litros': 'Litros',
-                            'media': 'Média', 'min': 'Mín', 'max': 'Máx', 'desvio': 'Desvio',
-                            'codigo_regra': 'Código', 'tipo_ocorrencia': 'Tipo',
-                            'evidencia': 'Evidência', 'gravidade_final': 'Gravidade',
-                        })
-                    )
-                else:
-                    st.success("Nenhuma ocorrência de gravidade MÉDIA")
-
+            if gravidade_sel == "ALTA":
+                df_ocs_view = df_ocs[df_ocs.get('gravidade_final', df_ocs.get('gravidade_inicial', '')).isin(['ALTA', 'CRITICA'])]
+            elif gravidade_sel == "MÉDIA":
+                df_ocs_view = df_ocs[df_ocs.get('gravidade_final', df_ocs.get('gravidade_inicial', '')).isin(['ALTA', 'CRITICA', 'MEDIA'])]
             else:
-                todas_df = df_ocs.copy()
-                cols_numericas = [
-                    'km_anterior', 'km_atual', 'km_rodados', 'km_esperado',
-                    'km_l', 'litros', 'media', 'min', 'max', 'desvio',
-                ]
-                for col in cols_numericas:
-                    if col in todas_df.columns:
-                        todas_df[col] = pd.to_numeric(todas_df[col], errors='coerce').round(2)
+                df_ocs_view = df_ocs
+
+            if df_ocs_view.empty:
+                st.success("✅ Nenhuma ocorrência nessa faixa de gravidade.")
+            else:
                 cols_show = [c for c in [
-                    'placa', 'condutor', 'modelo', 'unidade', 'data_hora',
-                    'km_anterior', 'km_atual', 'km_rodados', 'km_esperado',
-                    'km_l', 'litros', 'media', 'min', 'max', 'desvio',
-                    'codigo_regra', 'tipo_ocorrencia', 'gravidade_final', 'evidencia',
-                ] if c in todas_df.columns]
-                render_dataframe_limited(
-                    todas_df[cols_show].rename(columns={
-                        'placa': 'Placa', 'condutor': 'Condutor', 'modelo': 'Modelo',
-                        'unidade': 'Unidade', 'data_hora': 'Data/Hora',
-                        'km_anterior': 'KM Anterior', 'km_atual': 'KM Atual', 'km_rodados': 'KM Rodados',
-                        'km_esperado': 'KM Esperado', 'km_l': 'KM/L', 'litros': 'Litros',
-                        'media': 'Média', 'min': 'Mín', 'max': 'Máx', 'desvio': 'Desvio',
-                        'codigo_regra': 'Código', 'tipo_ocorrencia': 'Tipo',
-                        'gravidade_final': 'Gravidade', 'evidencia': 'Evidência',
-                    })
-                )
+                    'gravidade_final','gravidade_inicial','codigo_regra','tipo_ocorrencia',
+                    'placa','condutor','modelo','data_hora','litros','km_l',
+                    'valor_observado','valor_referencia','descricao_tecnica','recomendacao'
+                ] if c in df_ocs_view.columns]
+                render_dataframe_limited(df_ocs_view[cols_show].reset_index(drop=True))
 
-            # Rankings
-            r_placa  = relatorio_agente.get('ranking_placa', [])
-            r_condut = relatorio_agente.get('ranking_condutor', [])
-            r_posto  = relatorio_agente.get('ranking_estabelecimento', [])
-            
-            if any([r_placa, r_condut, r_posto]):
-                st.subheader("Rankings de Risco")
-                rc1, rc2, rc3 = st.columns(3)
-                with rc1:
-                    if r_placa:
-                        st.write("**Top Placas**")
-                        render_dataframe_limited(pd.DataFrame(r_placa))
-                with rc2:
-                    if r_condut:
-                        st.write("**Top Condutores**")
-                        render_dataframe_limited(pd.DataFrame(r_condut))
-                with rc3:
-                    if r_posto:
-                        st.write("**Top Estabelecimentos**")
-                        render_dataframe_limited(pd.DataFrame(r_posto))
-
-            # Notificações
-            if notificacoes_agente:
-                st.subheader(f"📬 Minutas de Notificação ({len(notificacoes_agente)})")
-
-                if st.button("Preparar Notificações (Word)", key="prep_notif_docx"):
-                    try:
-                        meta_notif = res['orq'].metadata if 'orq' in res else {}
-                        st.session_state.notif_docx_bytes = build_notificacao_docx(
-                            notificacoes_agente, metadata=meta_notif
-                        )
-                    except Exception as _e:
-                        st.warning(f"Não foi possível gerar o Word: {_e}")
-
-                if st.session_state.get('notif_docx_bytes'):
-                    st.download_button(
-                        label="📄 Baixar Notificações (Word .docx)",
-                        data=st.session_state.notif_docx_bytes,
-                        file_name='notificacoes_auditoria.docx',
-                        mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                        use_container_width=False,
-                        key='download_notif_docx',
-                    )
-
-                for i, notif in enumerate(notificacoes_agente):
-                    badge = "🔴" if notif.get('gravidade_max') == 'ALTA' else "🟠"
-                    unidade_notif = notif.get('unidade', '') or 'Sem unidade'
-                    with st.expander(
-                        f"{badge} {notif.get('condutor', '')} | {unidade_notif} | {notif.get('placa', '')} | {notif.get('data_abastecimento', '')}"
-                    ):
-                        st.text_area(
-                            label="",
-                            value=notif.get('texto_notificacao', ''),
-                            height=380,
-                            disabled=True,
-                            key=f"notif_text_{notif.get('placa','')}_{notif.get('data_abastecimento','')}_{i}",
-                        )
-
-            # Download CSV / Excel / PDF
-            csv_ocs = df_ocs.copy()
-            if 'data_hora' in csv_ocs.columns:
-                csv_ocs['data_hora'] = csv_ocs['data_hora'].astype(str)
-            xlsx_ocs = BytesIO()
-            with pd.ExcelWriter(xlsx_ocs, engine='openpyxl') as writer:
-                csv_ocs.to_excel(writer, index=False, sheet_name='Ocorrencias')
-            xlsx_ocs.seek(0)
-
-            d1, d2, d3 = st.columns(3)
-            with d1:
-                st.download_button(
-                    label="📥 Baixar Ocorrências (CSV)",
-                    data=csv_ocs.to_csv(index=False, sep=';').encode('utf-8-sig'),
-                    file_name='ocorrencias_auditoria.csv',
-                    mime='text/csv',
-                    use_container_width=True,
-                )
-            with d2:
-                st.download_button(
-                    label="📊 Baixar Ocorrências (Excel)",
-                    data=xlsx_ocs.getvalue(),
-                    file_name='ocorrencias_auditoria.xlsx',
-                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                    use_container_width=True,
-                )
-            with d3:
-                if st.button("Preparar Ocorrências (PDF)", key="prep_ocs_pdf", use_container_width=True):
-                    st.session_state.ocorrencias_pdf_bytes = build_ocorrencias_pdf_report(csv_ocs)
-                if st.session_state.get('ocorrencias_pdf_bytes'):
-                    st.download_button(
-                        label="📄 Baixar Ocorrências (PDF)",
-                        data=st.session_state.ocorrencias_pdf_bytes,
-                        file_name='ocorrencias_auditoria.pdf',
-                        mime='application/pdf',
-                        use_container_width=True,
-                        key='download_ocs_pdf',
-                    )
+                # Notificações — uma por acordeon
+                if notificacoes_agente:
+                    st.markdown(f"**📬 Minutas administrativas — {len(notificacoes_agente)} notificação(ões)**")
+                    for i, notif in enumerate(notificacoes_agente, 1):
+                        label = f"{i}. Placa {notif.get('placa','?')} · {notif.get('condutor','?')} — {notif.get('gravidade_max','?')}"
+                        with st.expander(label, expanded=False):
+                            st.text_area("", value=notif.get('texto_notificacao', notif.get('minuta', '')), height=260, key=f"notif_{i}", label_visibility="collapsed")
         else:
             st.success("✅ Nenhuma ocorrência identificada com os dados filtrados.")
 
-    # ═════ TAB 3: Alertas Operacionais ═════
+    # ══════════════════════════════════════════════════════════════
+    # TAB 3 — Alertas & Timeline
+    # ══════════════════════════════════════════════════════════════
     with tab3:
-        st.subheader("Alertas Operacionais (Análise Complementar)")
-
-        # Reaproveita as estruturas calculadas no processamento para evitar recomputo pesado em todo rerun.
+        # ── Alertas de frequência ─────────────────────────────────
         alert_df = res.get('alert_df')
         freq_suspeita = res.get('freq_suspeita')
         detalhes_freq = res.get('detalhes_freq')
@@ -3121,20 +2877,9 @@ if st.session_state.resultado_processado is not None:
             alert_df['data_dia'] = pd.to_datetime(alert_df['data'], errors='coerce').dt.date
             alert_df['data_hora'] = pd.to_datetime(alert_df['data'], errors='coerce').dt.strftime('%d/%m/%Y %H:%M')
             alert_df['ordem_abastecimento'] = alert_df.groupby('Placa').cumcount() + 1
-
             freq = alert_df.groupby(['Placa', 'data_dia']).size().reset_index(name='qtd_abastecimentos')
             freq_suspeita = freq[freq['qtd_abastecimentos'] >= 2].copy()
-
-            detalhes_freq = alert_df.merge(
-                freq_suspeita[['Placa', 'data_dia']],
-                on=['Placa', 'data_dia'],
-                how='inner',
-            )
-
-            alert_df['delta_min'] = (
-                alert_df.groupby('Placa')['data']
-                .diff().dt.total_seconds().div(60)
-            )
+            alert_df['delta_min'] = alert_df.groupby('Placa')['data'].diff().dt.total_seconds().div(60)
             alert_df['data_hora_anterior'] = alert_df.groupby('Placa')['data_hora'].shift(1)
             alert_df['posto_anterior'] = alert_df.groupby('Placa')['posto'].shift(1)
             alert_df['litros_anterior'] = alert_df.groupby('Placa')['litros'].shift(1)
@@ -3145,547 +2890,184 @@ if st.session_state.resultado_processado is not None:
             alert_df['km_anterior'] = alert_df.groupby('Placa')['km_atual_evento'].shift(1)
             alert_df['consumo_anterior'] = alert_df.groupby('Placa')['consumo'].shift(1)
             alert_df['sequencia'] = alert_df['ordem_abastecimento'].astype(str).radd('#')
+            detalhes_freq = alert_df.merge(freq_suspeita[['Placa', 'data_dia']], on=['Placa', 'data_dia'], how='inner')
         else:
             alert_df = alert_df.copy()
-            if freq_suspeita is None:
-                freq_suspeita = pd.DataFrame()
-            if detalhes_freq is None:
-                detalhes_freq = pd.DataFrame()
+            freq_suspeita = freq_suspeita if freq_suspeita is not None else pd.DataFrame()
+            detalhes_freq = detalhes_freq if detalhes_freq is not None else pd.DataFrame()
 
-        consumo_media_alertas = pd.to_numeric(alert_df.get('consumo', np.nan), errors='coerce').mean()
-        consumo_min_alertas = pd.to_numeric(alert_df.get('consumo', np.nan), errors='coerce').min()
-        consumo_max_alertas = pd.to_numeric(alert_df.get('consumo', np.nan), errors='coerce').max()
-        consumo_desvio_alertas = pd.to_numeric(alert_df.get('consumo', np.nan), errors='coerce').std()
-
-        # Eventos que realmente violam a regra (< 1h), usados no KPI.
         sequenciais_alerta = alert_df[(alert_df['delta_min'].notna()) & (alert_df['delta_min'] < 60)].copy()
-
-        # Para analise, inclui todos os abastecimentos envolvidos no bloco sequencial,
-        # incluindo o primeiro evento (quando o proximo ocorre em < 1h).
         proximo_delta = alert_df.groupby('Placa')['delta_min'].shift(-1)
         mascara_bloco = (
             ((alert_df['delta_min'].notna()) & (alert_df['delta_min'] < 60))
             | ((proximo_delta.notna()) & (proximo_delta < 60))
         )
         sequenciais = alert_df[mascara_bloco].copy()
-        
-        met1, met2 = st.columns(2)
-        met1.metric("Múltiplos no mesmo dia", int(len(freq_suspeita)))
-        met2.metric("Sequenciais < 1h", int(len(sequenciais_alerta)))
 
-        st.divider()
+        a1, a2 = st.columns(2)
+        a1.metric("Múltiplos no mesmo dia", int(len(freq_suspeita)))
+        a2.metric("Sequenciais < 1h", int(len(sequenciais_alerta)))
 
-        sub_tab1, sub_tab2 = st.tabs(["📌 Múltiplos Abastecimentos", "⏱️ Sequenciais"])
+        consumo_media_alertas = pd.to_numeric(alert_df.get('consumo', np.nan), errors='coerce').mean()
+        consumo_min_alertas = pd.to_numeric(alert_df.get('consumo', np.nan), errors='coerce').min()
+        consumo_max_alertas = pd.to_numeric(alert_df.get('consumo', np.nan), errors='coerce').max()
+        consumo_desvio_alertas = pd.to_numeric(alert_df.get('consumo', np.nan), errors='coerce').std()
 
-        # Colunas para Múltiplos (sem dados "Anterior")
-        colunas_multiplos = [
-            'Placa',
-            'Sequência',
-            'Data/Hora Atual',
-            'Posto Atual',
-            'Condutor',
-            'KM Anterior',
-            'KM Atual',
-            'KM Rodados',
-            'KM Esperado',
-            'Média',
-            'Min',
-            'Máx',
-            'Desvio',
-            'Litros',
-            'KM/L Atual',
-        ]
-
-        # Colunas para Sequenciais (com comparação com anterior)
-        colunas_sequenciais = [
-            'Placa',
-            'Sequência',
-            'Data/Hora Anterior',
-            'Data/Hora Atual',
-            'Posto Anterior',
-            'Posto Atual',
-            'Condutor',
-            'Intervalo (min)',
-            'Litros Anterior',
-            'Litros',
-            'KM Anterior',
-            'KM Atual',
-            'KM Rodados',
-            'KM Esperado',
-            'Média',
-            'Min',
-            'Máx',
-            'Desvio',
-            'KM/L Anterior',
-            'KM/L Atual',
-        ]
-
-        def _padronizar_alertas(df_src: pd.DataFrame, colunas_alvo: list) -> pd.DataFrame:
+        def _padronizar_alertas(df_src, colunas_alvo):
             if df_src is None or df_src.empty:
                 return pd.DataFrame(columns=colunas_alvo)
-
             view = df_src.copy().rename(columns={
-                'sequencia': 'Sequência',
-                'data_hora_anterior': 'Data/Hora Anterior',
-                'data_hora': 'Data/Hora Atual',
-                'posto_anterior': 'Posto Anterior',
-                'posto': 'Posto Atual',
-                'delta_min': 'Intervalo (min)',
-                'litros_anterior': 'Litros Anterior',
-                'litros': 'Litros',
-                'km_anterior': 'KM Anterior',
-                'km_anterior_base': 'KM Anterior Base',
-                'km_atual_evento': 'KM Atual',
-                'km_rodados': 'KM Rodados',
-                'consumo_anterior': 'KM/L Anterior',
-                'consumo': 'KM/L Atual',
+                'sequencia': 'Sequência', 'data_hora_anterior': 'Data/Hora Anterior',
+                'data_hora': 'Data/Hora Atual', 'posto_anterior': 'Posto Anterior',
+                'posto': 'Posto Atual', 'delta_min': 'Intervalo (min)',
+                'litros_anterior': 'Litros Anterior', 'litros': 'Litros',
+                'km_anterior': 'KM Anterior', 'km_atual_evento': 'KM Atual',
+                'km': 'KM Rodados', 'consumo_anterior': 'KM/L Anterior', 'consumo': 'KM/L Atual',
             })
-
-            if 'KM Anterior' not in view.columns and 'KM Anterior Base' in view.columns:
-                view['KM Anterior'] = view['KM Anterior Base']
-            elif 'KM Anterior' in view.columns and 'KM Anterior Base' in view.columns:
-                view['KM Anterior'] = view['KM Anterior'].combine_first(view['KM Anterior Base'])
-
-            if 'KM Atual' not in view.columns and 'km_atual_alerta' in df_src.columns:
-                view['KM Atual'] = pd.to_numeric(df_src['km_atual_alerta'], errors='coerce')
-            if 'KM Rodados' not in view.columns and 'km' in df_src.columns:
-                view['KM Rodados'] = pd.to_numeric(df_src['km'], errors='coerce')
-
-            # Fallback: quando KM Anterior estiver ausente, calcula por KM Atual - KM Rodados.
-            km_anterior_num = pd.to_numeric(view.get('KM Anterior', np.nan), errors='coerce')
-            km_atual_num = pd.to_numeric(view.get('KM Atual', np.nan), errors='coerce')
-            km_rodados_num = pd.to_numeric(view.get('KM Rodados', np.nan), errors='coerce')
-
-            if not isinstance(km_anterior_num, pd.Series):
-                km_anterior_num = pd.Series(km_anterior_num, index=view.index)
-            if not isinstance(km_atual_num, pd.Series):
-                km_atual_num = pd.Series(km_atual_num, index=view.index)
-            if not isinstance(km_rodados_num, pd.Series):
-                km_rodados_num = pd.Series(km_rodados_num, index=view.index)
-
-            view['KM Anterior'] = km_anterior_num.combine_first(km_atual_num - km_rodados_num)
-
             if 'KM Esperado' in colunas_alvo:
                 view['KM Esperado'] = pd.to_numeric(view.get('Litros', np.nan), errors='coerce') * float(consumo_media_alertas)
             if 'Média' in colunas_alvo:
                 view['Média'] = float(consumo_media_alertas)
-            if 'Min' in colunas_alvo:
-                view['Min'] = float(consumo_min_alertas)
-            if 'Máx' in colunas_alvo:
-                view['Máx'] = float(consumo_max_alertas)
-            if 'Desvio' in colunas_alvo:
-                view['Desvio'] = float(consumo_desvio_alertas)
-
-            if 'Data/Hora Atual' not in view.columns and 'data_hora' in df_src.columns:
-                view['Data/Hora Atual'] = df_src['data_hora']
-            if 'Posto Atual' not in view.columns and 'posto' in df_src.columns:
-                view['Posto Atual'] = df_src['posto']
-            if 'Sequência' not in view.columns and 'ordem_abastecimento' in df_src.columns:
-                view['Sequência'] = df_src['ordem_abastecimento'].astype(str).radd('#')
-
             for c in colunas_alvo:
                 if c not in view.columns:
                     view[c] = pd.NA
-
-            # Arredondar colunas numéricas se existirem
-            cols_num = [c for c in ['Intervalo (min)', 'Litros Anterior', 'Litros', 'KM Anterior', 'KM Atual', 'KM Rodados', 'KM Esperado', 'Média', 'Min', 'Máx', 'Desvio', 'KM/L Anterior', 'KM/L Atual'] if c in colunas_alvo]
+            cols_num = [c for c in ['Intervalo (min)','Litros','Litros Anterior','KM Anterior','KM Atual','KM Rodados','KM Esperado','Média','KM/L Anterior','KM/L Atual'] if c in colunas_alvo]
             for c in cols_num:
                 view[c] = pd.to_numeric(view[c], errors='coerce').round(2)
+            return view[colunas_alvo].sort_values(['Placa', 'Data/Hora Atual']).where(pd.notna(view[colunas_alvo]), '-')
 
-            view_final = view[colunas_alvo].sort_values(['Placa', 'Data/Hora Atual'])
-            view_final = view_final.where(pd.notna(view_final), '-')
-            view_final = view_final.replace({'None': '-', 'nan': '-', 'NaT': '-'})
-            return view_final
+        col_mult = ['Placa','Sequência','Data/Hora Atual','Posto Atual','Condutor','KM Anterior','KM Atual','KM Rodados','Litros','KM/L Atual','Média']
+        col_seq  = ['Placa','Sequência','Data/Hora Anterior','Data/Hora Atual','Posto Anterior','Posto Atual','Condutor','Intervalo (min)','Litros Anterior','Litros','KM Rodados','KM/L Anterior','KM/L Atual']
 
-        with sub_tab1:
+        with st.expander("📌 Múltiplos abastecimentos no mesmo dia", expanded=True):
             if detalhes_freq.empty:
                 st.info("Nenhum caso encontrado.")
             else:
-                render_dataframe_limited(_padronizar_alertas(detalhes_freq, colunas_multiplos))
+                render_dataframe_limited(_padronizar_alertas(detalhes_freq, col_mult))
 
-        with sub_tab2:
+        with st.expander("⏱️ Abastecimentos sequenciais < 1h", expanded=True):
             if sequenciais.empty:
                 st.info("Nenhum caso encontrado.")
             else:
-                render_dataframe_limited(_padronizar_alertas(sequenciais, colunas_sequenciais))
+                render_dataframe_limited(_padronizar_alertas(sequenciais, col_seq))
 
-    # ═════ TAB 4: Timeline ═════
-    with tab4:
-        st.subheader("Timeline por Placa")
-        
-        placas_disponiveis = sorted(filtered_df['Placa'].dropna().astype(str).unique().tolist())
-        placa_sel = st.selectbox("Selecione a placa", placas_disponiveis, key="sel_placa")
-        
-        timeline_df = filtered_df[filtered_df['Placa'].astype(str) == str(placa_sel)].sort_values('data').copy()
-        
+        st.divider()
+
+        # ── Timeline por placa ────────────────────────────────────
+        st.markdown("#### Timeline por Placa")
+        placas_disp = sorted(filtered_df['Placa'].dropna().astype(str).unique().tolist())
+        placa_sel = st.selectbox("Placa", placas_disp, key="sel_placa_tab3")
+        _tl_base = filtered_df[filtered_df['Placa'].astype(str) == str(placa_sel)].copy()
+        # Excluir registros com erro de km da timeline (consumo distorcido)
+        if '_erro_km' in _tl_base.columns:
+            _tl_base = _tl_base[~_tl_base['_erro_km']]
+        timeline_df = _tl_base.sort_values('data').copy()
         if timeline_df.empty:
-            st.warning("Nenhum evento para a placa selecionada.")
+            st.warning("Sem eventos válidos para esta placa (registros com erro de km foram excluídos).")
         else:
-            fig_timeline = px.scatter(
-                timeline_df, x='data', y='consumo', size='litros',
-                hover_data=['Placa', 'Condutor', 'posto', 'km', 'litros', 'consumo'],
-                title=f"Timeline da Placa {placa_sel}"
+            timeline_df['consumo_num'] = pd.to_numeric(timeline_df['consumo'], errors='coerce')
+            # litros para tamanho do ponto — substitui zeros/NaN por mínimo válido para evitar erro no scatter
+            _litros_raw = pd.to_numeric(timeline_df['litros'], errors='coerce').fillna(0)
+            timeline_df['litros_size'] = _litros_raw.clip(lower=1)
+            _lim_ok = not pd.isna(limiar_outlier)
+            timeline_df['outlier'] = timeline_df['consumo_num'] < limiar_outlier if _lim_ok else False
+
+            fig_tl = px.scatter(
+                timeline_df, x='data', y='consumo_num',
+                size='litros_size', color='outlier',
+                color_discrete_map={True: '#ef4444', False: '#38bdf8'},
+                hover_data={'Placa': True, 'Condutor': True, 'posto': True,
+                            'km': True, 'litros': True, 'consumo_num': True,
+                            'litros_size': False, 'outlier': False},
+                title=f"Placa {placa_sel} — consumo ao longo do tempo",
+                template='plotly_dark',
             )
-            fig_timeline.update_layout(xaxis_title='Data/Hora', yaxis_title='KM/L')
-            st.plotly_chart(fig_timeline, use_container_width=True)
-
-            render_dataframe_limited(
-                timeline_df[['data', 'Placa', 'Condutor', 'posto', 'km', 'litros', 'consumo']]
-                .rename(columns={
-                    'data': 'Data/Hora', 'posto': 'Posto',
-                    'km': 'KM Rodado', 'consumo': 'KM/L'
-                })
+            fig_tl.update_layout(
+                xaxis_title='Data', yaxis_title='KM/L',
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(15,24,38,0.6)',
+                margin=dict(l=8, r=8, t=40, b=8),
+                showlegend=False,
             )
+            # Fixar eixo Y com base nos dados reais; só mostrar limiar se estiver dentro do range
+            _y_vals = timeline_df['consumo_num'].dropna()
+            if not _y_vals.empty:
+                _y_min = _y_vals.min()
+                _y_max = _y_vals.max()
+                _y_pad = max((_y_max - _y_min) * 0.15, 1)
+                _range_min = _y_min - _y_pad
+                _range_max = _y_max + _y_pad
+                fig_tl.update_yaxes(range=[_range_min, _range_max])
+                # Adiciona limiar apenas se visível no eixo
+                if _lim_ok and _range_min <= limiar_outlier <= _range_max:
+                    fig_tl.add_hline(y=limiar_outlier, line_dash='dash', line_color='#ef4444',
+                                     annotation_text=f'Limiar {limiar_outlier:.2f}',
+                                     annotation_position='bottom right')
+            st.plotly_chart(fig_tl, use_container_width=True)
 
-    # ═════ TAB 5: Tabela de Dados ═════
-    with tab5:
-        st.subheader("Visualização Tabular dos Dados")
-        st.caption("Filtros avançados: marca, modelo, placa e condutor")
-
-        tabela_base = filtered_df.copy()
-
-        # ===== FILTROS (FORM) =====
-        with st.form("filtros_tabela_dados", border=True):
-            fcol1, fcol2, fcol3, fcol4 = st.columns(4)
-            
-            with fcol1:
-                marca_ops = ['Todos'] + sorted(tabela_base['Marca'].dropna().unique().tolist())
-                filtro_marca = st.selectbox("Marca", marca_ops, key="filter_marca_tab5")
-            
-            with fcol2:
-                if filtro_marca != 'Todos':
-                    temp_df = tabela_base[tabela_base['Marca'] == filtro_marca]
-                else:
-                    temp_df = tabela_base
-                modelo_ops = ['Todos'] + sorted(temp_df['Modelo'].dropna().unique().tolist())
-                filtro_modelo = st.selectbox("Modelo", modelo_ops, key="filter_modelo_tab5")
-            
-            with fcol3:
-                if filtro_marca != 'Todos':
-                    temp_df = tabela_base[tabela_base['Marca'] == filtro_marca]
-                else:
-                    temp_df = tabela_base
-                if filtro_modelo != 'Todos':
-                    temp_df = temp_df[temp_df['Modelo'] == filtro_modelo]
-                placa_ops = sorted(temp_df['Placa'].dropna().unique().tolist())
-                filtro_placas = st.multiselect("Placa", placa_ops, key="filter_placas_tab5")
-            
-            with fcol4:
-                if filtro_marca != 'Todos':
-                    temp_df = tabela_base[tabela_base['Marca'] == filtro_marca]
-                else:
-                    temp_df = tabela_base
-                condutor_ops = sorted(temp_df['Condutor'].dropna().unique().tolist())
-                filtro_condutores = st.multiselect("Condutor", condutor_ops, key="filter_condutores_tab5")
-            
-            btn_submit = st.form_submit_button("🔍 Aplicar Filtros", use_container_width=True)
-
-        # ===== APLICAR FILTROS SELECIONADOS =====
-        df_tabela = tabela_base.copy()
-        
-        if filtro_marca != 'Todos':
-            df_tabela = df_tabela[df_tabela['Marca'] == filtro_marca]
-        
-        if filtro_modelo != 'Todos':
-            df_tabela = df_tabela[df_tabela['Modelo'] == filtro_modelo]
-        
-        if filtro_placas:
-            df_tabela = df_tabela[df_tabela['Placa'].isin(filtro_placas)]
-        
-        if filtro_condutores:
-            df_tabela = df_tabela[df_tabela['Condutor'].isin(filtro_condutores)]
-
-        # ===== PREPARAR TABELA PARA EXIBIÇÃO =====
-        if df_tabela.empty:
-            st.info("Nenhum registro encontrado com os filtros selecionados.")
-        else:
-            if 'Produto' not in df_tabela.columns:
-                if 'produto' in df_tabela.columns:
-                    df_tabela['Produto'] = df_tabela['produto']
-                elif 'produto_alerta' in df_tabela.columns:
-                    df_tabela['Produto'] = df_tabela['produto_alerta']
-                elif 'combustivel' in df_tabela.columns:
-                    df_tabela['Produto'] = df_tabela['combustivel']
-                else:
-                    df_tabela['Produto'] = pd.NA
-
-            df_tabela['Produto'] = (
-                df_tabela['Produto']
-                .replace(['None', 'none', 'nan', 'NaN', ''], pd.NA)
-                .fillna('-')
-                .astype(str)
-                .str.strip()
-            )
-
-            # Colunas ordenadas logicamente
-            colunas_base = [
-                'data', 'Placa', 'Condutor', 'Marca', 'Modelo', 'posto', 'Produto',
-                'ult_km_alerta', 'km_atual_alerta', 'km', 'litros', 'consumo'
-            ]
-            
-            # Garantir que todas as colunas existem, preencher com NA se não
-            for c in colunas_base:
-                if c not in df_tabela.columns:
-                    df_tabela[c] = pd.NA
-            
-            # Selecionar apenas as colunas que existem
-            colunas_display = [c for c in colunas_base if c in df_tabela.columns]
-            tabela_exibicao = df_tabela[colunas_display].copy()
-
-            km_anterior_num = pd.to_numeric(tabela_exibicao.get('ult_km_alerta', np.nan), errors='coerce')
-            km_atual_num = pd.to_numeric(tabela_exibicao.get('km_atual_alerta', np.nan), errors='coerce')
-            km_rodados_num = pd.to_numeric(tabela_exibicao.get('km', np.nan), errors='coerce')
-
-            # Corrige origem de KM Atual/KM Rodados com fallback seguro.
-            km_atual_num = km_atual_num.combine_first(km_rodados_num)
-            km_rodados_num = km_rodados_num.combine_first(km_atual_num - km_anterior_num)
-
-            consumo_media_tabela = pd.to_numeric(df_tabela.get('consumo', np.nan), errors='coerce').mean()
-            consumo_min_tabela = pd.to_numeric(df_tabela.get('consumo', np.nan), errors='coerce').min()
-            consumo_max_tabela = pd.to_numeric(df_tabela.get('consumo', np.nan), errors='coerce').max()
-            consumo_desvio_tabela = pd.to_numeric(df_tabela.get('consumo', np.nan), errors='coerce').std()
-            sigma_mult_tabela = float(st.session_state.get('outlier_sigma_mult', 2.0))
-            limiar_outlier_tabela = consumo_media_tabela - (sigma_mult_tabela * consumo_desvio_tabela)
-            limiar_superior_tabela = consumo_media_tabela + (sigma_mult_tabela * consumo_desvio_tabela)
-
-            tabela_exibicao['km_anterior_calc'] = km_anterior_num
-            tabela_exibicao['km_atual_calc'] = km_atual_num
-            tabela_exibicao['km_rodados'] = km_rodados_num
-            tabela_exibicao['km_esperado'] = pd.to_numeric(tabela_exibicao.get('litros', np.nan), errors='coerce') * float(consumo_media_tabela)
-            tabela_exibicao['media_consumo'] = float(consumo_media_tabela)
-            tabela_exibicao['min_consumo'] = float(consumo_min_tabela)
-            tabela_exibicao['max_consumo'] = float(consumo_max_tabela)
-            tabela_exibicao['desvio_consumo'] = float(consumo_desvio_tabela)
-
-            consumo_linha = pd.to_numeric(tabela_exibicao.get('consumo', np.nan), errors='coerce')
-            km_esperado_num = pd.to_numeric(tabela_exibicao.get('km_esperado', np.nan), errors='coerce')
-
-            # Status com icones de causa (permite mais de uma sinalizacao por linha).
-            modelo_base = tabela_exibicao.get('Modelo', pd.Series('', index=tabela_exibicao.index)).astype(str)
-            capacidade_tanque = modelo_base.apply(
-                lambda m: VEHICLE_TANK_CAPACITIES.get(canonicalizar_modelo(m), np.nan)
-            )
-            litros_num = pd.to_numeric(tabela_exibicao.get('litros', np.nan), errors='coerce')
-
-            cond_queda_rendimento = consumo_linha < limiar_outlier_tabela
-            cond_subida_rendimento = consumo_linha > limiar_superior_tabela
-            cond_excesso_tanque = capacidade_tanque.notna() & (litros_num > (capacidade_tanque * 1.05))
-            cond_km_retrocedeu = (
-                km_atual_num.notna() & km_anterior_num.notna() & (km_atual_num < km_anterior_num)
-            )
-            cond_km_negativo = km_rodados_num < 0
-            cond_desvio_km = (
-                (km_esperado_num > 0)
-                & km_rodados_num.notna()
-                & (((km_rodados_num - km_esperado_num).abs() / km_esperado_num) > 0.25)
-            )
-            cond_dado_faltante = (
-                consumo_linha.isna()
-                | km_anterior_num.isna()
-                | km_atual_num.isna()
-                | km_rodados_num.isna()
-            )
-
-            status_icons = pd.Series('', index=tabela_exibicao.index, dtype='object')
-
-            def _append_icon(series: pd.Series, cond: pd.Series, icon: str) -> pd.Series:
-                if cond.any():
-                    serie_cond = series.loc[cond]
-                    series.loc[cond] = serie_cond.apply(lambda txt: f"{txt} {icon}".strip())
-                return series
-
-            status_icons = _append_icon(status_icons, cond_queda_rendimento, '🔻')
-            status_icons = _append_icon(status_icons, cond_subida_rendimento, '🟢⬆️')
-            status_icons = _append_icon(status_icons, cond_excesso_tanque, '⛽🚨')
-            status_icons = _append_icon(status_icons, cond_km_retrocedeu, '⏪🚨')
-            status_icons = _append_icon(status_icons, cond_km_negativo, '📉🚨')
-            status_icons = _append_icon(status_icons, cond_desvio_km, '📏⚠️')
-            status_icons = _append_icon(status_icons, cond_dado_faltante, '❓')
-            status_icons = status_icons.replace('', '✅')
-
-            tabela_exibicao['status_regra'] = status_icons
-            
-            # Renomear colunas para exibição
-            tabela_exibicao = tabela_exibicao.rename(columns={
-                'data': 'Data/Hora',
-                'Placa': 'Placa',
-                'Condutor': 'Condutor',
-                'Marca': 'Marca',
-                'Modelo': 'Modelo',
-                'posto': 'Posto',
-                'Produto': 'Produto',
-                'km_anterior_calc': 'KM Anterior',
-                'km_atual_calc': 'KM Atual',
-                'km_rodados': 'KM Rodados',
-                'km_esperado': 'KM Esperado',
-                'litros': 'Litros',
-                'consumo': 'KM/L',
-                'media_consumo': 'Média',
-                'min_consumo': 'Min',
-                'max_consumo': 'Máx',
-                'desvio_consumo': 'Desvio',
-                'status_regra': 'Status',
+            # ── Tabela de histórico da placa ──────────────────────
+            cols_tl = [c for c in ['data','Condutor','posto','ult_km_alerta','km_atual_alerta','km','litros','consumo_num'] if c in timeline_df.columns]
+            tl_view = timeline_df[cols_tl].rename(columns={
+                'data': 'Data/Hora', 'posto': 'Posto',
+                'ult_km_alerta': 'KM Anterior', 'km_atual_alerta': 'KM Atual',
+                'km': 'KM Rodados', 'litros': 'Litros', 'consumo_num': 'KM/L',
             })
-            
-            # Formatar data
-            if 'Data/Hora' in tabela_exibicao.columns:
-                tabela_exibicao['Data/Hora'] = pd.to_datetime(
-                    tabela_exibicao['Data/Hora'], errors='coerce'
-                ).dt.strftime('%d/%m/%Y %H:%M')
-            
-            # Arredondar colunas numéricas
-            for col in ['KM Anterior', 'KM Atual', 'KM Rodados', 'KM Esperado', 'Litros', 'KM/L', 'Média', 'Min', 'Máx', 'Desvio']:
+            for col in ['KM Anterior', 'KM Atual', 'KM Rodados', 'Litros', 'KM/L']:
+                if col in tl_view.columns:
+                    tl_view[col] = pd.to_numeric(tl_view[col], errors='coerce').round(2)
+            if 'Data/Hora' in tl_view.columns:
+                tl_view['Data/Hora'] = pd.to_datetime(tl_view['Data/Hora'], errors='coerce').dt.strftime('%d/%m/%Y %H:%M')
+            st.dataframe(tl_view.reset_index(drop=True), use_container_width=True)
+
+    # ══════════════════════════════════════════════════════════════
+    # TAB 4 — Dados & Relatórios
+    # ══════════════════════════════════════════════════════════════
+    with tab4:
+        dt1, dt2 = st.tabs(["🗂️ Tabela de Dados", "📥 Exportações & Manual"])
+
+        with dt1:
+            tabela_base = filtered_df.copy()
+            if 'Produto' not in tabela_base.columns:
+                for src in ['produto', 'produto_alerta', 'combustivel']:
+                    if src in tabela_base.columns:
+                        tabela_base['Produto'] = tabela_base[src]; break
+                else:
+                    tabela_base['Produto'] = pd.NA
+            tabela_base['Produto'] = tabela_base['Produto'].replace(['None','none','nan','NaN',''], pd.NA).fillna('-').astype(str).str.strip()
+
+            colunas_base = ['data','Placa','Condutor','Marca','Modelo','posto','Produto','ult_km_alerta','km_atual_alerta','km','litros','consumo']
+            for c in colunas_base:
+                if c not in tabela_base.columns:
+                    tabela_base[c] = pd.NA
+            tabela_exibicao = tabela_base[[c for c in colunas_base if c in tabela_base.columns]].copy()
+            tabela_exibicao = tabela_exibicao.rename(columns={
+                'data':'Data/Hora','posto':'Posto','ult_km_alerta':'KM Anterior',
+                'km_atual_alerta':'KM Atual','km':'KM Rodados','litros':'Litros','consumo':'KM/L',
+            })
+            for col in ['KM Anterior','KM Atual','KM Rodados','Litros','KM/L']:
                 if col in tabela_exibicao.columns:
                     tabela_exibicao[col] = pd.to_numeric(tabela_exibicao[col], errors='coerce').round(2)
-            
-            # Reordenar colunas finais
-            colunas_finais = [
-                'Data/Hora', 'Placa', 'Condutor', 'Marca', 'Modelo', 'Posto', 'Produto',
-                'KM Anterior', 'KM Atual', 'KM Rodados', 'KM Esperado', 'KM/L', 'Litros',
-                'Média', 'Min', 'Máx', 'Desvio', 'Status'
-            ]
-            colunas_finais = [c for c in colunas_finais if c in tabela_exibicao.columns]
-            tabela_exibicao = tabela_exibicao[colunas_finais]
-            tabela_exibicao = tabela_exibicao.where(pd.notna(tabela_exibicao), '-')
-            tabela_exibicao = tabela_exibicao.replace({'None': '-', 'nan': '-', 'NaT': '-'})
-            
-            # Exibir tabela
-            st.caption(
-                "Legenda: ✅ Normal | 🔻 Queda de rendimento | 🟢⬆️ Aumento de rendimento | "
-                "⛽🚨 Excesso de tanque | ⏪🚨 KM atual < anterior | 📉🚨 KM rodado negativo | "
-                "📏⚠️ Desvio KM vs esperado | ❓ Dados faltantes"
-            )
-            total_linhas_tabela = len(tabela_exibicao)
-            if total_linhas_tabela > MAX_RENDER_ROWS:
-                st.warning(
-                    f"Exibicao limitada a {MAX_RENDER_ROWS:,} linhas para evitar travamento da interface. "
-                    f"Total filtrado: {total_linhas_tabela:,} linhas.".replace(',', '.')
-                )
-                tabela_exibicao_view = tabela_exibicao.head(MAX_RENDER_ROWS)
-            else:
-                tabela_exibicao_view = tabela_exibicao
+            if 'Data/Hora' in tabela_exibicao.columns:
+                tabela_exibicao['Data/Hora'] = pd.to_datetime(tabela_exibicao['Data/Hora'], errors='coerce').dt.strftime('%d/%m/%Y %H:%M')
+            tabela_exibicao = tabela_exibicao.where(pd.notna(tabela_exibicao), '-').replace({'None':'-','nan':'-','NaT':'-'})
 
-            st.dataframe(tabela_exibicao_view, use_container_width=True)
-            
-            # ===== DOWNLOADS =====
-            assinatura_tabela = f"{len(tabela_exibicao)}|{'|'.join(tabela_exibicao.columns)}"
-            if 'Data/Hora' in tabela_exibicao.columns and not tabela_exibicao.empty:
-                assinatura_tabela = (
-                    f"{assinatura_tabela}|{tabela_exibicao['Data/Hora'].iloc[0]}|"
-                    f"{tabela_exibicao['Data/Hora'].iloc[-1]}"
-                )
+            st.caption(f"{len(tabela_exibicao):,} registros no recorte atual".replace(',', '.'))
+            render_dataframe_limited(tabela_exibicao)
 
-            if st.session_state.get('tab5_export_signature') != assinatura_tabela:
-                st.session_state.tab5_export_signature = assinatura_tabela
-                st.session_state.tab5_csv_bytes = None
-                st.session_state.tab5_xlsx_bytes = None
+            d1, d2 = st.columns(2)
+            csv_tab = tabela_exibicao.to_csv(index=False, sep=';', encoding='utf-8-sig')
+            d1.download_button("📥 CSV", data=csv_tab, file_name="dados_auditoria.csv", mime="text/csv", use_container_width=True)
+            xlsx_tab = BytesIO()
+            with pd.ExcelWriter(xlsx_tab, engine='openpyxl') as w:
+                tabela_exibicao.to_excel(w, index=False, sheet_name='Dados')
+            xlsx_tab.seek(0)
+            d2.download_button("📥 Excel", data=xlsx_tab.getvalue(), file_name="dados_auditoria.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                               use_container_width=True)
 
-            prep_col, db1, db2 = st.columns(3)
-            with prep_col:
-                if st.button("Preparar Downloads", key="prep_tab5_downloads", use_container_width=True):
-                    with st.spinner("Gerando arquivos da tabela..."):
-                        st.session_state.tab5_csv_bytes = tabela_exibicao.to_csv(
-                            index=False, sep=';', encoding='utf-8-sig'
-                        )
-                        xlsx_tabela = BytesIO()
-                        with pd.ExcelWriter(xlsx_tabela, engine='openpyxl') as writer:
-                            tabela_exibicao.to_excel(writer, index=False, sheet_name='Dados')
-                        xlsx_tabela.seek(0)
-                        st.session_state.tab5_xlsx_bytes = xlsx_tabela.getvalue()
-
-            with db1:
-                st.download_button(
-                    label="📥 Baixar (CSV)",
-                    data=st.session_state.get('tab5_csv_bytes') or "",
-                    file_name="dados_tabela.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                    disabled=st.session_state.get('tab5_csv_bytes') is None,
-                )
-            with db2:
-                st.download_button(
-                    label="📥 Baixar (Excel)",
-                    data=st.session_state.get('tab5_xlsx_bytes') or b"",
-                    file_name="dados_tabela.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
-                    disabled=st.session_state.get('tab5_xlsx_bytes') is None,
-                )
-
-    # ═════ TAB 6: Relatórios ═════
-    with tab6:
-        manual_tab, export_tab = st.tabs(["📘 Manual no Navegador", "📥 Exportacoes"])
-
-        with manual_tab:
+        with dt2:
+            st.markdown("#### Manual")
             manual_data = carregar_manual_docx_estruturado(str(MANUAL_DOCX_PATH))
             renderizar_manual_no_dashboard(manual_data)
-
-        with export_tab:
-            st.subheader("Exportar Relatórios")
-            st.caption("Versoes disponiveis: Excel analitico completo, Excel executivo resumido e PDF consolidado.")
-
-            col_r1, col_r2, col_r3 = st.columns(3)
-
-            if resultado_auditoria.get('relatorio'):
-                with col_r1:
-                    if st.button("Preparar Auditoria Analítica (Excel)", key="prep_excel_analitico"):
-                        with st.spinner("Gerando Excel analitico..."):
-                            st.session_state.excel_auditoria_bytes = build_auditoria_analitica_excel(
-                                filtered_df=res['filtered_df'],
-                                resultado_auditoria=resultado_auditoria,
-                                filtros_ui=st.session_state.get('filtros_ui', {}),
-                                freq_suspeita=res['freq_suspeita'],
-                                sequenciais=res['sequenciais'],
-                                sigma_mult=float(st.session_state.get('outlier_sigma_mult', 2.0)),
-                            )
-
-                    st.download_button(
-                        label="📊 Auditoria Analítica (Excel)",
-                        data=st.session_state.get('excel_auditoria_bytes') or b"",
-                        file_name="relatorio_auditoria_analitica.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        help="Relatorio completo por filtro aplicado, com ocorrencias, base filtrada e analise por modelo quando aplicavel.",
-                        disabled=st.session_state.get('excel_auditoria_bytes') is None,
-                    )
-
-            with col_r2:
-                if st.button("Preparar Relatório Executivo (Excel)", key="prep_excel_executivo"):
-                    with st.spinner("Gerando Excel executivo..."):
-                        st.session_state.excel_executivo_bytes = build_excel_report(
-                            res['filtered_df'], res['freq_suspeita'], res['sequenciais']
-                        )
-
-                st.download_button(
-                    label="📈 Relatório Executivo (Excel)",
-                    data=st.session_state.get('excel_executivo_bytes') or b"",
-                    file_name="relatorio_frota_inteligente.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    help="Versao resumida em Excel com KPIs principais, base filtrada e alertas sequenciais.",
-                    disabled=st.session_state.get('excel_executivo_bytes') is None,
-                )
-
-            with col_r3:
-                if st.button("Preparar Auditoria Analítica (PDF)", key="prep_resumo_pdf"):
-                    try:
-                        st.session_state.relatorio_pdf_bytes = build_auditoria_analitica_pdf(
-                            filtered_df=res['filtered_df'],
-                            resultado_auditoria=resultado_auditoria,
-                            filtros_ui=st.session_state.get('filtros_ui', {}),
-                            freq_suspeita=res['freq_suspeita'],
-                            sequenciais=res['sequenciais'],
-                            sigma_mult=float(st.session_state.get('outlier_sigma_mult', 2.0)),
-                        )
-                    except Exception as pdf_error:
-                        st.warning(f"⚠️ Erro ao gerar PDF: {pdf_error}")
-
-                if st.session_state.get('relatorio_pdf_bytes'):
-                    st.download_button(
-                        label="📄 Auditoria Analítica (PDF)",
-                        data=st.session_state.relatorio_pdf_bytes,
-                        file_name="relatorio_auditoria_analitica.pdf",
-                        mime="application/pdf",
-                        key="download_resumo_pdf",
-                    )
 
 else:
     st.info("👈 Configure os filtros e clique em **'Processar Dados'** para ver os resultados.")
