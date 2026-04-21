@@ -252,6 +252,12 @@ def make_line_custo_medio_mes_combustivel(df_filtered: pd.DataFrame) -> go.Figur
 	grupo['mes_label'] = grupo['mes'].apply(lambda m: MONTHS[m])
 
 	fig = go.Figure()
+	color_map = {
+		'GASOLINA': '#38bdf8',  # azul claro
+		'DIESEL': '#f97316',    # laranja padrão
+		'DIESEL S10': '#f97316', # laranja padrão para S10
+		'ALCOOL': '#3b82f6',    # azul (pode ajustar se quiser outro tom)
+	}
 	combustiveis = grupo['combustivel'].unique()
 	for combustivel in combustiveis:
 		dados = grupo[grupo['combustivel'] == combustivel]
@@ -261,7 +267,9 @@ def make_line_custo_medio_mes_combustivel(df_filtered: pd.DataFrame) -> go.Figur
 			mode='lines+markers',
 			name=str(combustivel),
 			text=[f"R$ {v:,.3f}".replace(",", ".") for v in dados['custo_medio']],
-			textposition="top center"
+			textposition="top center",
+			line={"color": color_map.get(str(combustivel).upper(), '#38bdf8'), "width": 3},
+			marker={"color": color_map.get(str(combustivel).upper(), '#38bdf8')},
 		))
 	fig.update_layout(
 		template="plotly_dark",
