@@ -179,68 +179,38 @@ def make_bar_consumo_tipo_mes(df_filtered: pd.DataFrame) -> go.Figure:
 		.agg(valor_total=("valor", "sum"))
 		.sort_values(["ano", "mes", "combustivel_grupo"])
 	)
-	grupo["periodo"] = grupo.apply(lambda row: f"{row['mes_nome']}/{int(row['ano'])}", axis=1)
+	def corrige_mes_nome(mes_nome):
+		return "Março" if str(mes_nome).strip().lower() == "marco" else mes_nome
+	grupo["periodo"] = grupo.apply(lambda row: f"{corrige_mes_nome(row['mes_nome'])}/{int(row['ano'])}", axis=1)
 
-	# Calcular média por tipo de combustível
-	medias = grupo.groupby("combustivel_grupo")["valor_total"].mean()
-	color_map = {"GASOLINA": "#2563eb", "DIESEL": "#fb7185", "ALCOOL": "#f97316"}
+	# Nova paleta de cores
+	color_map = {"GASOLINA": "#2563eb", "DIESEL": "#38bdf8", "ALCOOL": "#f97316"}  # azul escuro, azul claro, laranja
 	fig = go.Figure()
-	for idx, fuel in enumerate(["GASOLINA", "DIESEL", "ALCOOL"]):
+	for fuel in ["GASOLINA", "DIESEL", "ALCOOL"]:
 		dados = grupo[grupo["combustivel_grupo"] == fuel]
 		if dados.empty:
 			continue
-		media = medias.get(fuel, 0)
-		azul = [min(v, media) for v in dados["valor_total"]]
-		vermelho = [max(0, v - media) for v in dados["valor_total"]]
-		total = [a + r for a, r in zip(azul, vermelho)]
-		# Barras até a média (base)
 		fig.add_trace(
 			go.Bar(
 				x=dados["periodo"],
-				y=azul,
+				y=dados["valor_total"],
 				name=fuel.title(),
 				marker_color=color_map[fuel],
-				text=[f"R$ {v:,.2f}" if v > 0 and r == 0 else "" for v, r in zip(dados["valor_total"], vermelho)],
+				text=[f"R$ {v:,.2f}" for v in dados["valor_total"]],
 				textposition="outside",
 				offsetgroup=fuel,
 				legendgroup=fuel,
 				showlegend=True,
-				customdata=list(zip(azul, vermelho, total)),
-				hovertemplate="<b>%{x}</b><br>Consumo até média: R$ %{customdata[0]:,.2f}<br>Excesso: R$ %{customdata[1]:,.2f}<br>Total: R$ %{customdata[2]:,.2f}<extra></extra>",
-				textfont_size=12,
-				textfont_color="#fff",
-				textfont_family="'Space Grotesk', sans-serif",
+				   textfont={"size": 16, "color": "#fff", "family": "'Space Grotesk', sans-serif"},
 			)
 		)
-		# Barras excesso (no topo, vermelho, legenda só na primeira vez)
-		show_excesso_legend = idx == 0
-		fig.add_trace(
-			go.Bar(
-				x=dados["periodo"],
-				y=vermelho,
-				name="Excesso sobre média" if show_excesso_legend else None,
-				marker_color="#e63946",
-				text=[f"R$ {v:,.2f}" if r > 0 else "" for v, r in zip(dados["valor_total"], vermelho)],
-				textposition="outside",
-				offsetgroup=fuel,
-				legendgroup="excesso",
-				base=azul,
-				showlegend=show_excesso_legend,
-				customdata=list(zip(azul, vermelho, total)),
-				hovertemplate="<b>%{x}</b><br>Consumo até média: R$ %{customdata[0]:,.2f}<br>Excesso: R$ %{customdata[1]:,.2f}<br>Total: R$ %{customdata[2]:,.2f}<extra></extra>",
-				textfont_size=12,
-				textfont_color="#fff",
-				textfont_family="'Space Grotesk', sans-serif",
-			)
-		)
-		# Valor total no topo da barra empilhada (acima da barra)
-		# Texto exatamente no topo da barra mais alta
-		# (Removido: agora o texto está no próprio go.Bar)
 	fig.update_layout(
 		template="plotly_dark",
 		xaxis_title={"text": "Período", "font": {"size": 14}},
 		yaxis_title={"text": "Valor faturado (R$)", "font": {"size": 14}},
-		barmode="relative",
+		barmode="group",
+		bargap=0.18,  # Espaço entre grupos de meses
+		bargroupgap=0.08,  # Espaço sutil entre as barras agrupadas
 		margin={"l": 30, "r": 30, "t": 90, "b": 30},
 		legend={
 			"orientation": "h",
