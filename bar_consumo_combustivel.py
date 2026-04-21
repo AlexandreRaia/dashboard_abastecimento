@@ -10,10 +10,11 @@ def make_bar_consumo_combustivel(df_filtered):
     def moeda_br(v):
         return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
+    color_map = {"GASOLINA": "#2563eb", "DIESEL": "#38bdf8", "ALCOOL": "#f97316", "DIESEL S10": "#38bdf8"}
     fig = go.Figure(go.Bar(
         x=by_fuel["combustivel"],
         y=by_fuel["valor"],
-        marker_color=["#1f77b4" if c=="GASOLINA" else ("#ff7f0e" if c=="ALCOOL" else ("#d62728" if c=="DIESEL" else "#38bdf8")) for c in by_fuel["combustivel"]],
+        marker_color=[color_map.get(c, "#2563eb") for c in by_fuel["combustivel"]],
         text=[moeda_br(v) for v in by_fuel["valor"]],
         textposition="outside",
         textfont={"size": 20, "color": "#fff", "family": "'Space Grotesk', sans-serif", "weight": "bold"},
