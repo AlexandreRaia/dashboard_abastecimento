@@ -1234,6 +1234,134 @@ def make_line_custo_medio_mes_combustivel(df_filtered: pd.DataFrame) -> go.Figur
     return fig
 
 
+def make_ranking_veiculos(df_filtered: pd.DataFrame, top_n: int = 20) -> go.Figure:
+    """Top N veículos por gasto total (R$), identificados por Marca Modelo — PLACA | Secretaria."""
+    needed = {"placa", "marca", "modelo", "valor", "litros"}
+    if df_filtered.empty or not needed.issubset(df_filtered.columns):
+        fig = go.Figure()
+        fig.update_layout(template="plotly_dark", title="Ranking de veículos — sem dados")
+        return apply_plotly_theme(fig)
+
+    df = df_filtered.copy()
+    has_sec = "secretaria" in df.columns
+    group_cols = ["marca", "modelo", "placa"] + (["secretaria"] if has_sec else [])
+
+    grp = (
+        df.groupby(group_cols, as_index=False)
+        .agg(valor=("valor", "sum"), litros=("litros", "sum"), abastecimentos=("placa", "count"))
+        .sort_values("valor", ascending=False)
+        .head(top_n)
+        .reset_index(drop=True)
+    )
+    grp["rank"] = range(1, len(grp) + 1)
+    grp = grp.sort_values("valor", ascending=True).reset_index(drop=True)
+
+    def _label(row):
+        veiculo = (
+            row["marca"].strip().title()
+            + " "
+            + row["modelo"].strip().title()
+            + " — "
+            + row["placa"].strip().upper()
+        )
+        if has_sec and row.get("secretaria", ""):
+            veiculo += f"  |  {str(row['secretaria']).strip()}"
+        return f"#{int(row['rank'])}  {veiculo}"
+
+    labels_y = [_label(row) for _, row in grp.iterrows()]
+    texto = [f"R$ {v:,.0f}".replace(",", ".") for v in grp["valor"]]
+
+    fig = go.Figure(go.Bar(
+        y=labels_y,
+        x=grp["valor"],
+        orientation="h",
+        marker={"color": "#2563eb", "line": {"width": 0}},
+        text=texto,
+        textposition="outside",
+        textfont={"size": 12, "color": "#eaf2ff", "family": "Rajdhani, sans-serif"},
+        customdata=list(zip(grp["litros"], grp["abastecimentos"])),
+        hovertemplate=(
+            "<b>%{y}</b><br>"
+            "Gasto: R$ %{x:,.2f}<br>"
+            "Litros: %{customdata[0]:,.1f} L<br>"
+            "Abastecimentos: %{customdata[1]}<extra></extra>"
+        ),
+        showlegend=False,
+    ))
+
+    max_val = grp["valor"].max() if not grp.empty else 1
+    fig.update_layout(
+        template="plotly_dark",
+        title={"text": f"🏆 Top {top_n} veículos por gasto", "font": {"size": 18, "family": "Rajdhani, sans-serif"}},
+        xaxis={
+            "title": "Gasto total (R$)",
+            "tickprefix": "R$ ",
+            "showgrid": True,
+            "gridcolor": "rgba(255,255,255,0.07)",
+            "range": [0, max_val * 1.22],
+        },
+        yaxis={
+            "tickfont": {"size": 12, "family": "Rajdhani, sans-serif"},
+            "showgrid": False,
+        },
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        margin={"l": 10, "r": 20, "t": 50, "b": 30},
+        height=max(480, 32 * top_n),
+        bargap=0.35,
+    )
+    return apply_plotly_theme(fig)
+
+
+def make_treemap_postos(df_filtered: pd.DataFrame) -> go.Figure:
+    """Treemap dos postos de abastecimento por valor total gasto."""
+    if df_filtered.empty or "posto" not in df_filtered.columns:
+        fig = go.Figure()
+        fig.update_layout(template="plotly_dark", title="Treemap de postos — sem dados")
+        return apply_plotly_theme(fig)
+
+    df = df_filtered.copy()
+    df["posto"] = df["posto"].fillna("Desconhecido").str.strip()
+    df = df[df["posto"] != ""]
+
+    grp = (
+        df.groupby("posto", as_index=False)
+        .agg(valor=("valor", "sum"), litros=("litros", "sum"), abastecimentos=("placa", "count"))
+        .sort_values("valor", ascending=False)
+    )
+
+    fig = go.Figure(go.Treemap(
+        labels=grp["posto"],
+        parents=[""] * len(grp),
+        values=grp["valor"],
+        customdata=list(zip(grp["litros"], grp["abastecimentos"])),
+        texttemplate="<b>%{label}</b><br>R$ %{value:,.0f}",
+        hovertemplate=(
+            "<b>%{label}</b><br>"
+            "Gasto: R$ %{value:,.2f}<br>"
+            "Litros: %{customdata[0]:,.1f} L<br>"
+            "Abastecimentos: %{customdata[1]}<extra></extra>"
+        ),
+        marker={
+            "colorscale": [
+                [0.0, "#1e3a5f"],
+                [0.5, "#1d6fa4"],
+                [1.0, "#38bdf8"],
+            ],
+            "colors": grp["valor"].tolist(),
+            "showscale": False,
+        },
+        textfont={"size": 13, "color": "#eaf2ff"},
+    ))
+    fig.update_layout(
+        template="plotly_dark",
+        title="Postos de abastecimento — gasto total (R$)",
+        margin={"l": 10, "r": 10, "t": 48, "b": 10},
+        height=520,
+    )
+    return apply_plotly_theme(fig)
+
+
 def make_line_custo_medio_rl_combustivel(df_filtered: pd.DataFrame) -> go.Figure:
     """Custo médio (R$/L) por tipo de combustível ao longo dos meses."""
     if df_filtered.empty or not {"mes", "combustivel", "valor", "litros"}.issubset(df_filtered.columns):
@@ -1457,24 +1585,18 @@ def run_dashboard() -> None:
 		months_alert = month_count(df_alert_base)
 		periodo_label = f"1 mês" if months_alert == 1 else f"{months_alert} meses"
 
-		# Excedidas: mostra "NOME: +R$ X.XXX"
-		if n_exc and "desvio_valor" in excedidas.columns:
-			_exc_parts = [
-				f"{row['secretaria']}: +R$\u00a0{row['desvio_valor']:,.0f}"
-				for _, row in excedidas.head(3).iterrows()
-			]
+		# Excedidas: mostra só o nome da secretaria
+		if n_exc and "secretaria" in excedidas.columns:
+			_exc_parts = [row['secretaria'] for _, row in excedidas.head(3).iterrows()]
 			if n_exc > 3:
 				_exc_parts.append(f"+ {n_exc - 3} mais")
 			exc_names = "<br>".join(_exc_parts)
 		else:
 			exc_names = ""
 
-		# Próximas: mostra "NOME (X% restante)"
-		if n_prox and "desvio_pct" in proximas.columns:
-			_prox_parts = [
-				f"{row['secretaria']} ({abs(row['desvio_pct']):.0f}% restante)"
-				for _, row in proximas.head(3).iterrows()
-			]
+		# Próximas: mostra só o nome da secretaria
+		if n_prox and "secretaria" in proximas.columns:
+			_prox_parts = [row['secretaria'] for _, row in proximas.head(3).iterrows()]
 			if n_prox > 3:
 				_prox_parts.append(f"+ {n_prox - 3} mais")
 			prox_names = "<br>".join(_prox_parts)
@@ -1489,7 +1611,6 @@ def run_dashboard() -> None:
 				<div class="alert-body">
 					<span class="alert-count-red">{n_exc}</span>
 					<span class="alert-label">Limite acumulado excedido</span>
-					<span class="alert-sublabel">Gasto total &gt; limite × {periodo_label}</span>
 					<span class="alert-detail">{exc_names}</span>
 				</div>
 			</div>
@@ -1682,7 +1803,7 @@ def run_dashboard() -> None:
 		f"Valores com desconto contratual de {discount_rate * 100:.2f}% aplicado sobre o valor bruto."
 	)
 
-	tab_fin, tab_con, tab_sec = st.tabs(["📊 Financeiro", "⛽ Consumo", "🏢 Secretarias"])
+	tab_fin, tab_con, tab_sec, tab_veic, tab_postos = st.tabs(["📊 Financeiro", "⛽ Consumo", "🏢 Secretarias", "🚗 Veículos", "⛽ Postos"])
 
 	with tab_fin:
 		col_ano, col_mes = st.columns([1, 2])
@@ -1746,6 +1867,21 @@ def run_dashboard() -> None:
 				"desvio_pct": "Desvio (%)",
 				"desvio_valor": "Desvio (R$)",
 			}), use_container_width=True)
+
+	with tab_veic:
+		st.plotly_chart(make_ranking_veiculos(filtered), use_container_width=True, key="ranking_veic_valor")
+
+	with tab_postos:
+		st.plotly_chart(make_treemap_postos(filtered), use_container_width=True, key="treemap_postos")
+		# Tabela complementar
+		if not filtered.empty and "posto" in filtered.columns:
+			df_postos_tbl = (
+				filtered.groupby("posto", as_index=False)
+				.agg(valor=("valor", "sum"), litros=("litros", "sum"), abastecimentos=("placa", "count"))
+				.sort_values("valor", ascending=False)
+				.rename(columns={"posto": "Posto", "valor": "Gasto (R$)", "litros": "Litros", "abastecimentos": "Abastecimentos"})
+			)
+			st.dataframe(df_postos_tbl.reset_index(drop=True), use_container_width=True)
 
 if __name__ == "__main__":
 	run_dashboard()
