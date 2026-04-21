@@ -1126,16 +1126,9 @@ def apply_filters(df, filtros, fuel_map):
     # Evita copia completa da base em toda iteracao dos filtros.
     base_df = df
 
-    periodo = filtros.get('periodo')
-    if periodo and 'data' in base_df.columns:
-        try:
-            data_ini, data_fim = periodo
-            if data_ini is not None:
-                base_df = base_df[base_df['data'] >= pd.Timestamp(data_ini)]
-            if data_fim is not None:
-                base_df = base_df[base_df['data'] < (pd.Timestamp(data_fim) + pd.Timedelta(days=1))]
-        except Exception:
-            pass
+    ano_filter = filtros.get('ano', 'Todos')
+    if ano_filter and ano_filter != 'Todos' and 'ano' in base_df.columns:
+        base_df = base_df[base_df['ano'].astype(str) == str(ano_filter)]
 
     fuel_filter = filtros.get('fuel', 'Todos')
     if 'combustivel_norm' in base_df.columns and fuel_filter in fuel_map:
@@ -1160,6 +1153,10 @@ def apply_filters(df, filtros, fuel_map):
     condutor_filter = filtros.get('condutor', 'Todos')
     if condutor_filter != 'Todos':
         base_df = base_df[base_df['Condutor'] == condutor_filter]
+
+    unidade_filter = filtros.get('unidade', 'Todas')
+    if unidade_filter and unidade_filter != 'Todas' and 'unidade_alerta' in base_df.columns:
+        base_df = base_df[base_df['unidade_alerta'].astype(str) == unidade_filter]
 
     placa_filter = filtros.get('placa', 'Todos')
     if placa_filter != 'Todos':
@@ -2372,12 +2369,13 @@ if 'active_db_path' not in st.session_state:
     st.session_state.active_db_path = str(RESULTADOS_DB)
 if 'filtros_ui' not in st.session_state:
     st.session_state.filtros_ui = {
+        'ano': 'Todos',
         'fuel': 'Todos',
+        'unidade': 'Todas',
         'marca': 'Todos',
         'modelo': 'Todos',
         'condutor': 'Todos',
         'placa': 'Todos',
-        'periodo': None,
     }
 if 'outlier_sigma_mult' not in st.session_state:
     st.session_state.outlier_sigma_mult = 2.0
@@ -2482,8 +2480,6 @@ if df.empty:
 # SEÇÃO DE FILTROS
 # ═════════════════════════════════════════════════════════════════
 
-st.sidebar.header("🔧 Filtros de Análise")
-
 fuel_map = {
     'Gasolina': 'gasolina',
     'Alcool': 'alcool',
@@ -2491,110 +2487,74 @@ fuel_map = {
 }
 filtros_ui = st.session_state.filtros_ui
 
-fuel_options = ["Todos", "Gasolina", "Alcool", "DIESEL S10"] if 'combustivel_norm' in df.columns else ["Todos"]
-marca_options = ["Todos"] + (sorted(df['Marca'].dropna().astype(str).unique().tolist()) if 'Marca' in df.columns else [])
+# Opções dos filtros
+anos_disponiveis = ["Todos"] + sorted(
+    df['ano'].dropna().unique().astype(int).astype(str).tolist(), reverse=True
+) if 'ano' in df.columns else ["Todos"]
+fuel_options = ["Todos"] + sorted(df['combustivel'].dropna().unique().tolist()) if 'combustivel' in df.columns else ["Todos", "Gasolina", "Alcool", "DIESEL S10"]
+unidade_options = ["Todas"] + sorted(df['unidade_alerta'].dropna().astype(str).unique().tolist()) if 'unidade_alerta' in df.columns else ["Todas"]
+marca_options = ["Todos"] + sorted(df['Marca'].dropna().astype(str).unique().tolist()) if 'Marca' in df.columns else ["Todos"]
 cond_options = ["Todos"] + sorted(df['Condutor'].dropna().astype(str).unique().tolist())
 placa_options = ["Todos"] + sorted(df['Placa'].dropna().astype(str).unique().tolist())
 
-defaults = {
-    'fuel': filtros_ui.get('fuel', 'Todos'),
-    'marca': filtros_ui.get('marca', 'Todos'),
-    'modelo': filtros_ui.get('modelo', 'Todos'),
-    'condutor': filtros_ui.get('condutor', 'Todos'),
-    'placa': filtros_ui.get('placa', 'Todos'),
-}
-
-if 'data' in df.columns and not df.empty:
-    min_data = pd.to_datetime(df['data'], errors='coerce').min()
-    max_data = pd.to_datetime(df['data'], errors='coerce').max()
-    if pd.notna(min_data) and pd.notna(max_data):
-        periodo_default = filtros_ui.get('periodo')
-        if not periodo_default or len(periodo_default) != 2:
-            periodo_default = (min_data.date(), max_data.date())
-    else:
-        periodo_default = None
-else:
-    periodo_default = None
-
-for key, value in defaults.items():
-    draft_key = f"draft_{key}"
-    if draft_key not in st.session_state:
-        st.session_state[draft_key] = value
-
-if st.session_state.draft_fuel not in fuel_options:
-    st.session_state.draft_fuel = "Todos"
-if st.session_state.draft_marca not in marca_options:
-    st.session_state.draft_marca = "Todos"
-
-df_modelos_filtro = df.copy()
-if 'Marca' in df_modelos_filtro.columns and st.session_state.draft_marca != 'Todos':
-    df_modelos_filtro = df_modelos_filtro[df_modelos_filtro['Marca'].astype(str) == st.session_state.draft_marca]
-
+# Gera modelo_options com base na marca selecionada
+_marca_sel = filtros_ui.get('marca', 'Todos')
+df_modelos_filtro = df[df['Marca'].astype(str) == _marca_sel] if (_marca_sel != 'Todos' and 'Marca' in df.columns) else df
 modelos_norm = (
-    df_modelos_filtro['Modelo']
-    .dropna()
-    .astype(str)
-    .str.strip()
-    .replace('', pd.NA)
-    .dropna()
-    .apply(canonicalizar_modelo)
-)
+    df_modelos_filtro['Modelo'].dropna().astype(str).str.strip()
+    .replace('', pd.NA).dropna().apply(canonicalizar_modelo)
+) if 'Modelo' in df_modelos_filtro.columns else pd.Series(dtype=str)
 modelo_options = ["Todos"] + sorted(modelos_norm.dropna().unique().tolist())
 
-if st.session_state.draft_modelo not in modelo_options:
-    st.session_state.draft_modelo = "Todos"
-if st.session_state.draft_condutor not in cond_options:
-    st.session_state.draft_condutor = "Todos"
-if st.session_state.draft_placa not in placa_options:
-    st.session_state.draft_placa = "Todos"
+# Índices padrão
+_ano_default = filtros_ui.get('ano', str(datetime.now().year))
+_ano_idx = anos_disponiveis.index(_ano_default) if _ano_default in anos_disponiveis else 0
 
-if periodo_default is not None and 'draft_periodo' not in st.session_state:
-    st.session_state.draft_periodo = periodo_default
-
-st.sidebar.radio("Combustível", fuel_options, horizontal=True, key="draft_fuel")
-if periodo_default is not None:
-    st.sidebar.date_input("Período", value=st.session_state.get('draft_periodo', periodo_default), key="draft_periodo")
-st.sidebar.selectbox("Marca", marca_options, key="draft_marca")
-st.sidebar.selectbox("Modelo", modelo_options, key="draft_modelo")
-st.sidebar.selectbox("Condutor", cond_options, key="draft_condutor")
-st.sidebar.selectbox("Placa", placa_options, key="draft_placa")
-sigma_mult = st.sidebar.slider(
-    "Sensibilidade de Outlier (σ)",
-    min_value=0.5,
-    max_value=3.0,
-    value=float(st.session_state.outlier_sigma_mult),
-    step=0.1,
-    help="Regra usada: consumo < media - σ*desvio. Quanto menor o σ, mais sensivel.",
-)
-aplicar_filtros = st.sidebar.button("Aplicar Filtros", use_container_width=True)
+with st.sidebar:
+    with st.expander("🔍 Filtros", expanded=True):
+        selected_ano = st.selectbox("Ano", anos_disponiveis, index=_ano_idx, key="aud_sel_ano")
+        selected_fuel = st.selectbox("Combustível", fuel_options, index=safe_index(fuel_options, filtros_ui.get('fuel', 'Todos')), key="aud_sel_fuel")
+        selected_unidade = st.selectbox("Unidade / Secretaria", unidade_options, index=safe_index(unidade_options, filtros_ui.get('unidade', 'Todas')), key="aud_sel_unidade")
+        selected_marca = st.selectbox("Marca", marca_options, index=safe_index(marca_options, filtros_ui.get('marca', 'Todos')), key="aud_sel_marca")
+        selected_modelo = st.selectbox("Modelo", modelo_options, index=safe_index(modelo_options, filtros_ui.get('modelo', 'Todos')), key="aud_sel_modelo")
+        selected_condutor = st.selectbox("Condutor", cond_options, index=safe_index(cond_options, filtros_ui.get('condutor', 'Todos')), key="aud_sel_condutor")
+        selected_placa = st.selectbox("Placa", placa_options, index=safe_index(placa_options, filtros_ui.get('placa', 'Todos')), key="aud_sel_placa")
+        sigma_mult = st.slider(
+            "Sensibilidade de Outlier (σ)",
+            min_value=0.5, max_value=3.0,
+            value=float(st.session_state.outlier_sigma_mult),
+            step=0.1,
+            help="Regra usada: consumo < media - σ*desvio. Quanto menor o σ, mais sensivel.",
+        )
+        col_ap, col_lim = st.columns(2)
+        with col_ap:
+            aplicar_filtros = st.button("✅ Aplicar", use_container_width=True)
+        with col_lim:
+            if st.button("🗑️ Limpar", use_container_width=True):
+                st.session_state.filtros_ui = {
+                    'ano': 'Todos', 'fuel': 'Todos', 'unidade': 'Todas',
+                    'marca': 'Todos', 'modelo': 'Todos', 'condutor': 'Todos', 'placa': 'Todos',
+                }
+                st.session_state.resultado_processado = None
+                st.rerun()
 
 if aplicar_filtros:
     st.session_state.outlier_sigma_mult = float(sigma_mult)
-
-    periodo_sel = st.session_state.get('draft_periodo', None)
-    periodo_final = None
-    if periodo_sel is not None:
-        if isinstance(periodo_sel, tuple) and len(periodo_sel) == 2:
-            periodo_final = periodo_sel
-        elif isinstance(periodo_sel, list) and len(periodo_sel) == 2:
-            periodo_final = (periodo_sel[0], periodo_sel[1])
-        else:
-            periodo_final = (periodo_sel, periodo_sel)
-
     st.session_state.filtros_ui = {
-        'fuel': st.session_state.draft_fuel,
-        'marca': st.session_state.draft_marca,
-        'modelo': st.session_state.draft_modelo,
-        'condutor': st.session_state.draft_condutor,
-        'placa': st.session_state.draft_placa,
-        'periodo': periodo_final,
+        'ano': selected_ano,
+        'fuel': selected_fuel,
+        'unidade': selected_unidade,
+        'marca': selected_marca,
+        'modelo': selected_modelo,
+        'condutor': selected_condutor,
+        'placa': selected_placa,
     }
 
     data_version = (
         st.session_state.get('upload_hash', ''),
         st.session_state.get('active_db_path', ''),
         int(len(df)),
-        str(df['data'].max()) if 'data' in df.columns and not df.empty else '',
+        str(df['ano'].max()) if 'ano' in df.columns and not df.empty else '',
     )
     filtered_df_submit, modelo_filter_list_submit = apply_filters_cached(
         df,
