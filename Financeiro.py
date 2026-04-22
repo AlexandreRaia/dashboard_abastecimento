@@ -2,6 +2,7 @@ import json
 import sqlite3
 import datetime
 import streamlit as st
+import streamlit.components.v1 as st_components
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -316,6 +317,21 @@ def build_ranking(status_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def inject_style() -> None:
+	st_components.html(
+		"""
+		<script>
+		(function() {
+			var r = window.parent.document.documentElement;
+			r.setAttribute('translate', 'no');
+			r.setAttribute('lang', 'pt-BR');
+			var m = window.parent.document.createElement('meta');
+			m.name = 'google'; m.content = 'notranslate';
+			window.parent.document.head.appendChild(m);
+		})();
+		</script>
+		""",
+		height=0,
+	)
 	st.markdown(
 		"""
 		<style>
@@ -1576,7 +1592,97 @@ def run_dashboard() -> None:
 	discount_rate = get_discount_rate()
 	if "db_version" not in st.session_state:
 		st.session_state["db_version"] = 0
-	df_real = apply_discount(get_real_df(st.session_state["db_version"]), discount_rate)
+
+	# ── Importação de Excel (sempre visível na sidebar, independente do banco) ──
+	def _render_sidebar_uploader():
+		import re as _re, io as _io
+		with st.sidebar:
+			with st.expander("📂 Atualizar Dados", expanded=True):
+				_up = st.file_uploader(
+					"Importar relatório Excel",
+					type=["xlsx", "xls"],
+					help="Selecione o arquivo Relatorio.xlsx exportado do sistema.",
+					key="upload_relatorio_early",
+				)
+				if _up is not None:
+					_file_id = f"{_up.name}_{_up.size}"
+					_imported_ids = st.session_state.get("_imported_ids", set())
+					if _file_id not in _imported_ids:
+						with st.spinner("Importando dados..."):
+							try:
+								_KNOWN_COLS = {"Placa", "Data/Hora", "Unidade", "Produto", "Qtde (L)", "Valor"}
+
+								def _sanitize(name):
+									s = name.strip().lower()
+									s = _re.sub(r'\s+', '_', s)
+									s = _re.sub(r'[^a-z0-9_]', '_', s)
+									s = _re.sub(r'_+', '_', s).strip('_')
+									return s or 'sheet'
+
+								def _find_header_row(raw_df):
+									for i, row in raw_df.iterrows():
+										row_vals = set(str(v).strip() for v in row.values)
+										if len(_KNOWN_COLS & row_vals) >= 2:
+											return i
+									return None
+
+								def _safe_df(df):
+									for _c in df.columns:
+										if pd.api.types.is_datetime64_any_dtype(df[_c]):
+											df[_c] = df[_c].astype(str)
+										elif df[_c].dtype == object:
+											df[_c] = df[_c].apply(lambda v: str(v) if hasattr(v, 'isoformat') else v)
+									return df
+
+								_file_bytes = _up.read()
+								sheets_raw = pd.read_excel(_io.BytesIO(_file_bytes), sheet_name=None, header=None)
+								single_sheet = len(sheets_raw) == 1
+								used_tables: set = set()
+								with sqlite3.connect(str(DB_PATH)) as _conn:
+									for sheet_name, raw in sheets_raw.items():
+										base = 'abastecimentos' if single_sheet else _sanitize(sheet_name)
+										tbl = base
+										idx = 1
+										while tbl in used_tables:
+											idx += 1
+											tbl = f"{base}_{idx}"
+										used_tables.add(tbl)
+										header_row = _find_header_row(raw)
+										if header_row is not None:
+											df_import = pd.read_excel(_io.BytesIO(_file_bytes), sheet_name=sheet_name, header=header_row)
+										else:
+											df_import = raw
+										try:
+											df_existing = pd.read_sql_query(f'SELECT * FROM "{tbl}"', _conn)
+										except Exception:
+											df_existing = pd.DataFrame()
+										df_combined = pd.concat([df_existing, df_import], ignore_index=True).drop_duplicates()
+										_safe_df(df_combined).to_sql(tbl, _conn, if_exists='replace', index=False)
+								_imported_ids.add(_file_id)
+								st.session_state["_imported_ids"] = _imported_ids
+								st.session_state["db_version"] = st.session_state.get("db_version", 0) + 1
+								get_real_df.clear()
+								st.success(f"✅ {_up.name} importado com sucesso! Recarregando...")
+								st.rerun()
+							except Exception as _e:
+								import traceback as _tb
+								st.error(f"❌ Erro ao importar: {_e}\n\n```\n{_tb.format_exc()}\n```")
+					else:
+						st.info("ℹ️ Este arquivo já foi importado nesta sessão.")
+
+	try:
+		df_real = apply_discount(get_real_df(st.session_state["db_version"]), discount_rate)
+	except RuntimeError as _e:
+		if "Nenhuma tabela de abastecimento" in str(_e):
+			st.error(
+				"⚠️ **Banco de dados desatualizado ou incompatível.**\n\n"
+				"O arquivo `relatorio.db` existe, mas não contém a tabela esperada de abastecimentos. "
+				"Use o botão **📂 Atualizar Dados** na barra lateral para reimportar o relatório."
+			)
+		else:
+			st.error(f"Erro ao carregar dados: {_e}")
+		_render_sidebar_uploader()
+		st.stop()
 
 	# Opções dos selectboxes
 	secretaria_options = ["Todas"] + sorted(df_limits["secretaria"].dropna().unique().tolist())

@@ -56,14 +56,20 @@ class AgentRegras:
     def processar(self, df: pd.DataFrame, params: dict = None) -> list:
         params = params or {}
         ocs = []
-        ocs += self._r01_capacidade_tanque(df)
-        ocs += self._r02_consumo_fora_faixa(df)
-        ocs += self._r03_consumo_critico(df, sigma_override=params.get('outlier_sigma_mult'))
-        ocs += self._r04_hodometro(df)
-        ocs += self._r05_km_incompativel(df)
-        ocs += self._r06_abastecimentos_proximos(df)
-        ocs += self._r07_preco_acima_contratado(df)
-        ocs += self._r08_valor_inconsistente(df)
+
+        # Registros com _erro_km=True têm km inválido (erro de digitação).
+        # São excluídos das regras que dependem de quilometragem/consumo,
+        # mas permanecem na base para exibição no relatório de qualidade.
+        df_km_ok = df[~df['_erro_km'].astype(bool)].copy() if '_erro_km' in df.columns else df
+
+        ocs += self._r01_capacidade_tanque(df)          # litros — usa df completo
+        ocs += self._r02_consumo_fora_faixa(df_km_ok)   # consumo depende de km
+        ocs += self._r03_consumo_critico(df_km_ok, sigma_override=params.get('outlier_sigma_mult'))
+        ocs += self._r04_hodometro(df_km_ok)
+        ocs += self._r05_km_incompativel(df_km_ok)
+        ocs += self._r06_abastecimentos_proximos(df)    # intervalo de tempo — ok usar df completo
+        ocs += self._r07_preco_acima_contratado(df)     # preço — independe de km
+        ocs += self._r08_valor_inconsistente(df)        # valor — independe de km
         # R09 e R10 são gerados pelo AgentHistorico com dados de contexto
         return ocs
 

@@ -1632,19 +1632,47 @@ def build_outliers_pdf_report(tabela_outliers, sigma_mult, limiar_outlier):
 
 def build_notificacao_docx(notificacoes, metadata=None):
     """
-    Gera documento Word padronizado com minutas de notificação,
-    usando o cabeçalho timbrado do modelo da Prefeitura.
+    Gera documento Word padronizado usando o Modelo_relatorio como template,
+    preservando cabeçalho timbrado, margens e estilos originais.
     """
-    import zipfile
     from docx import Document
     from docx.shared import Pt, Cm
     from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
 
     MESES_PT = {
         1: 'janeiro', 2: 'fevereiro', 3: 'março', 4: 'abril',
         5: 'maio', 6: 'junho', 7: 'julho', 8: 'agosto',
         9: 'setembro', 10: 'outubro', 11: 'novembro', 12: 'dezembro',
     }
+
+    # Mapeamento sigla → nome completo das secretarias
+    _SIGLA_NOME = {
+        'SEMUTTRANS': 'SECRETARIA MUNICIPAL DE MOBILIDADE URBANA E TRÂNSITO',
+        'SMCC':       'SECRETARIA MUNICIPAL DE COMUNICAÇÃO E CULTURA',
+        'SMDS':       'SECRETARIA MUNICIPAL DE DESENVOLVIMENTO SOCIAL',
+        'SMSU':       'SECRETARIA MUNICIPAL DE SERVIÇOS URBANOS',
+        'SMAFEL':     'SECRETARIA MUNICIPAL DE ADMINISTRAÇÃO, FINANÇAS, ESPORTE E LAZER',
+        'SMS':        'SECRETARIA MUNICIPAL DE SAÚDE',
+        'SMMAP':      'SECRETARIA MUNICIPAL DE MEIO AMBIENTE E PROTEÇÃO ANIMAL',
+        'SMCS':       'SECRETARIA MUNICIPAL DE CULTURA E SHOWS',
+        'SMO':        'SECRETARIA MUNICIPAL DE OBRAS',
+        'SMGAED':     'SECRETARIA MUNICIPAL DE GESTÃO ADMINISTRATIVA E DESENVOLVIMENTO',
+        'SMF':        'SECRETARIA MUNICIPAL DE FAZENDA',
+        'SMOU':       'SECRETARIA MUNICIPAL DE OBRAS E URBANISMO',
+        'SME':        'SECRETARIA MUNICIPAL DE EDUCAÇÃO',
+        'SMA':        'SECRETARIA MUNICIPAL DE ADMINISTRAÇÃO',
+        'SMTI':       'SECRETARIA MUNICIPAL DE TECNOLOGIA DA INFORMAÇÃO',
+        'SMSM':       'SECRETARIA MUNICIPAL DE SERVIÇOS E MANUTENÇÃO',
+        'SEMEDES':    'SECRETARIA MUNICIPAL DE DESENVOLVIMENTO ECONÔMICO',
+        'SMCT':       'SECRETARIA MUNICIPAL DE CIÊNCIA E TECNOLOGIA',
+        'SMMF':       'SECRETARIA MUNICIPAL DE MEIO AMBIENTE E FAZENDAS',
+    }
+
+    def _expandir_unidade(sigla: str) -> str:
+        """Retorna o nome completo da secretaria pela sigla, ou a própria string se não encontrada."""
+        key = sigla.strip().upper()
+        return _SIGLA_NOME.get(key, sigla.strip().upper())
 
     metadata = metadata or {}
     cidade = metadata.get('municipio', '') or 'Santana de Parnaíba'
@@ -1653,181 +1681,142 @@ def build_notificacao_docx(notificacoes, metadata=None):
     agora = datetime.now()
     data_longa = f"{agora.day} de {MESES_PT[agora.month]} de {agora.year}"
 
-    # Extrair logo do modelo timbrado e normalizar para RGB (modelo usa CMYK)
-    logo_bytes = None
+    # Abre o Modelo_relatorio como template (preserva cabeçalho timbrado, margens e estilos)
     modelo_path = PROJECT_ROOT / 'Modelo_relatorio'
     if modelo_path.exists():
-        try:
-            from PIL import Image as _PILImage
-            with zipfile.ZipFile(str(modelo_path), 'r') as z:
-                raw_logo = z.read('word/media/image2.jpg')
-            img = _PILImage.open(BytesIO(raw_logo)).convert('RGB')
-            logo_buf = BytesIO()
-            img.save(logo_buf, format='JPEG')
-            logo_buf.seek(0)
-            logo_bytes = logo_buf
-        except Exception:
-            pass
+        doc = Document(str(modelo_path))
+        # Limpa o corpo mantendo apenas o sectPr (configurações de seção)
+        body = doc.element.body
+        for child in list(body):
+            if child.tag != qn('w:sectPr'):
+                body.remove(child)
+    else:
+        doc = Document()
+        section = doc.sections[0]
+        section.top_margin = Cm(4.0)
+        section.bottom_margin = Cm(2.0)
+        section.left_margin = Cm(3.0)
+        section.right_margin = Cm(2.0)
 
-    doc = Document()
-    section = doc.sections[0]
-    section.top_margin = Cm(4.0)
-    section.bottom_margin = Cm(2.0)
-    section.left_margin = Cm(3.0)
-    section.right_margin = Cm(2.0)
-
-    # Cabeçalho timbrado
-    if logo_bytes:
-        header = section.header
-        hp = header.paragraphs[0]
-        hp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r = hp.add_run()
-        r.add_picture(logo_bytes, width=Cm(16.5))
-
-    def _p(text='', bold=False, size=11, align=WD_ALIGN_PARAGRAPH.LEFT,
-           first_indent_cm=0.0, add_to=None):
-        """Atalho para adicionar parágrafo formatado."""
-        p = (add_to or doc).add_paragraph()
+    def _p(text='', bold=False, italic=False, size=12,
+           align=WD_ALIGN_PARAGRAPH.JUSTIFY,
+           first_indent_cm=0.0, space_before=240, space_after=240):
+        """Adiciona parágrafo com formatação padrão do modelo (12pt, justify, spacing 240)."""
+        p = doc.add_paragraph()
         p.alignment = align
+        pf = p.paragraph_format
+        pf.space_before = Pt(0)
+        pf.space_after = Pt(0)
+        # Usa twips diretamente para replicar w:spacing w:before="240" w:after="240"
+        from docx.oxml import OxmlElement
+        pPr = p._p.get_or_add_pPr()
+        spacing = OxmlElement('w:spacing')
+        spacing.set(qn('w:before'), str(space_before))
+        spacing.set(qn('w:after'), str(space_after))
+        pPr.append(spacing)
         if first_indent_cm:
             p.paragraph_format.first_line_indent = Cm(first_indent_cm)
-        run = p.add_run(text)
-        run.bold = bold
-        run.font.size = Pt(size)
+        if text:
+            run = p.add_run(text)
+            run.bold = bold
+            run.italic = italic
+            run.font.size = Pt(size)
         return p
 
     for i, notif in enumerate(notificacoes):
         if i > 0:
             doc.add_page_break()
 
-
+        condutor = str(notif.get('condutor', '') or '').strip().upper()
+        _unidade_raw = str(notif.get('unidade', '') or '').strip()
+        # Ignora placeholders e expande sigla para nome completo
+        _unidade_valida = _unidade_raw not in {'', '-', 'nan', 'None', 'NAN', 'NONE'}
+        unidade = _expandir_unidade(_unidade_raw) if _unidade_valida else ''
+        placa = str(notif.get('placa', ''))
+        modelo_veiculo = str(notif.get('modelo', '') or '')
+        data_abast = str(notif.get('data_abastecimento', ''))
+        estabelecimento = str(notif.get('estabelecimento') or 'não informado')
 
         # ── Título ─────────────────────────────────────────────────────
-        _p('NOTIFICAÇÃO ADMINISTRATIVA — CONTROLE DE FROTA',
-           bold=True, size=13, align=WD_ALIGN_PARAGRAPH.CENTER)
-
-        doc.add_paragraph()
+        _p('NOTIFICAÇÃO ADMINISTRATIVA — CONTROLE DE ABASTECIMENTO',
+           bold=False, size=12, align=WD_ALIGN_PARAGRAPH.CENTER)
 
         # ── Data ───────────────────────────────────────────────────────
-        _p(f'{cidade}, {data_longa}.', size=11,
-           align=WD_ALIGN_PARAGRAPH.RIGHT)
+        _p(f'{cidade}, {data_longa}.', size=12, align=WD_ALIGN_PARAGRAPH.RIGHT)
 
-        doc.add_paragraph()
+        _p()  # linha em branco
 
         # ── Destinatário ───────────────────────────────────────────────
-        dest = doc.add_paragraph()
-        dest.add_run('Ao(À) Sr.(a) ').font.size = Pt(11)
-        r_cond = dest.add_run(notif['condutor'].title())
-        r_cond.bold = True
-        r_cond.font.size = Pt(11)
-        if notif.get('unidade'):
+        p_dest = doc.add_paragraph()
+        p_dest.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        r1 = p_dest.add_run(f'Prezado(a) {condutor}')
+        r1.bold = True
+        r1.font.size = Pt(12)
+
+        if unidade:
             p_uni = doc.add_paragraph()
-            p_uni.add_run(notif['unidade']).font.size = Pt(11)
+            p_uni.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+            r_uni = p_uni.add_run(unidade)
+            r_uni.bold = True
+            r_uni.font.size = Pt(12)
 
-        doc.add_paragraph()
-
-        # ── Assunto ────────────────────────────────────────────────────
-        assunto = doc.add_paragraph()
-        r_label = assunto.add_run('Assunto: ')
-        r_label.bold = True
-        r_label.font.size = Pt(11)
-        assunto.add_run(
-            f'Irregularidade em abastecimento — '
-            f'Veículo {notif["placa"]} ({notif.get("modelo", "")}) — '
-            f'Data: {notif["data_abastecimento"]}'
-        ).font.size = Pt(11)
-
-        doc.add_paragraph()
-
-        # ── Introdução ─────────────────────────────────────────────────
+        # ── Corpo ──────────────────────────────────────────────────────
         _p(
-            f'Pelo presente instrumento, comunicamos a V. Sª. que foram identificadas '
-            f'inconsistências técnicas nos registros de abastecimento vinculados ao '
-            f'veículo {notif["placa"]} ({notif.get("modelo", "")}), '
-            f'realizado em {notif["data_abastecimento"]} no estabelecimento '
-            f'{notif.get("estabelecimento") or "não informado"}, conforme análise '
-            f'automatizada do sistema de controle de frota municipal.',
-            size=11,
+            f'Foram identificadas inconsistências técnicas nos registros de '
+            f'abastecimento vinculados ao veículo {placa}'
+            f'{(" (" + modelo_veiculo + ")") if modelo_veiculo else ""}, '
+            f'realizado em {data_abast} no estabelecimento {estabelecimento}.',
+            size=12,
             align=WD_ALIGN_PARAGRAPH.JUSTIFY,
-            first_indent_cm=1.5,
+            first_indent_cm=1.25,
         )
 
-        doc.add_paragraph()
-
-        # ── Tabela de ocorrências ──────────────────────────────────────
-        _p('OCORRÊNCIAS IDENTIFICADAS:', bold=True, size=11)
+        # ── Ocorrências ────────────────────────────────────────────────
+        _p('OCORRÊNCIAS IDENTIFICADAS:', size=12,
+           align=WD_ALIGN_PARAGRAPH.JUSTIFY, first_indent_cm=1.25)
 
         ocorrencias = notif.get('ocorrencias', [])
-        if ocorrencias:
-            tbl = doc.add_table(rows=1, cols=4)
-            tbl.style = 'Table Grid'
-            hdr_cells = tbl.rows[0].cells
-            _labels = ['Código', 'Gravidade', 'Tipo', 'Descrição Técnica']
-            for j, lbl in enumerate(_labels):
-                hdr_cells[j].text = lbl
-                for run in hdr_cells[j].paragraphs[0].runs:
-                    run.bold = True
-                    run.font.size = Pt(9)
-
-            for oc in ocorrencias:
-                row_cells = tbl.add_row().cells
-                row_cells[0].text = oc.get('codigo_regra', '')
-                row_cells[1].text = oc.get('gravidade_final', oc.get('gravidade_inicial', ''))
-                row_cells[2].text = oc.get('tipo_ocorrencia', '').title()
-                row_cells[3].text = oc.get('descricao_tecnica', '')
-                for cell in row_cells:
-                    for run in cell.paragraphs[0].runs:
-                        run.font.size = Pt(9)
-
-            # Largura relativa das colunas
-            from docx.oxml.ns import qn
-            from docx.oxml import OxmlElement
-            tbl_elem = tbl._tbl
-            tblPr = tbl_elem.find(qn('w:tblPr'))
-            if tblPr is None:
-                tblPr = OxmlElement('w:tblPr')
-                tbl_elem.insert(0, tblPr)
-            tblW = OxmlElement('w:tblW')
-            tblW.set(qn('w:w'), '9360')
-            tblW.set(qn('w:type'), 'dxa')
-            tblPr.append(tblW)
-
-        doc.add_paragraph()
+        for oc in ocorrencias:
+            codigo = oc.get('codigo_regra', '')
+            tipo = oc.get('tipo_ocorrencia', '').title()
+            descricao = oc.get('descricao_tecnica', '')
+            linha = f'[{codigo}] {tipo}: {descricao}' if codigo else f'{tipo}: {descricao}'
+            _p(linha, size=12, align=WD_ALIGN_PARAGRAPH.JUSTIFY)
 
         # ── Solicitação ────────────────────────────────────────────────
         _p(
             'Diante do exposto, solicitamos manifestação formal com apresentação '
             'de justificativas e documentos comprobatórios no prazo de '
             '48 (quarenta e oito) horas a contar do recebimento desta notificação.',
-            size=11,
+            size=12,
             align=WD_ALIGN_PARAGRAPH.JUSTIFY,
-            first_indent_cm=1.5,
+            first_indent_cm=1.25,
         )
-
-        doc.add_paragraph()
 
         # ── Ressalva jurídica ──────────────────────────────────────────
         _p(
             'Ressaltamos que a presente análise possui caráter técnico e preliminar, '
             'sendo assegurados ao notificado os princípios do contraditório e da '
             'ampla defesa, nos termos da legislação vigente.',
-            size=11,
+            size=12,
             align=WD_ALIGN_PARAGRAPH.JUSTIFY,
-            first_indent_cm=1.5,
+            first_indent_cm=1.25,
         )
 
-        doc.add_paragraph()
-        doc.add_paragraph()
+        _p()  # linha em branco
+
+        # ── Encerramento ───────────────────────────────────────────────
+        _p('Atenciosamente,', size=12, align=WD_ALIGN_PARAGRAPH.JUSTIFY)
+
+        _p()
+        _p()
 
         # ── Assinatura ─────────────────────────────────────────────────
-        _p('Atenciosamente,', size=11, align=WD_ALIGN_PARAGRAPH.CENTER)
-        doc.add_paragraph()
-        doc.add_paragraph()
-        doc.add_paragraph()
-
-        _p('_' * 45, size=11, align=WD_ALIGN_PARAGRAPH.CENTER)
-        _p('Fiscalização de Frota', bold=True, size=11, align=WD_ALIGN_PARAGRAPH.CENTER)
-        _p(responsavel, size=10, align=WD_ALIGN_PARAGRAPH.CENTER)
+        p_sign = doc.add_paragraph()
+        p_sign.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        r_sign = p_sign.add_run(f'                                       {responsavel}')
+        r_sign.bold = True
+        r_sign.font.size = Pt(12)
 
     output = BytesIO()
     doc.save(output)
@@ -1975,11 +1964,13 @@ def load_and_process_data(uploaded_file):
     km_atual_col = first_existing_column(df, ['km Atual', 'Km Atual', 'KM Atual'])
     produto_col = first_existing_column(df, ['Produto'])
 
-    df['unidade_alerta'] = df[unidade_col] if unidade_col else 'Nao informado'
+    df['unidade_alerta'] = df[unidade_col].fillna('-').astype(str) if unidade_col else '-'
     df['ult_km_alerta'] = df[ult_km_col] if ult_km_col else np.nan
     df['km_atual_alerta'] = df[km_atual_col] if km_atual_col else np.nan
     df['produto_alerta'] = df[produto_col] if produto_col else 'Nao informado'
-    df['modelo_alerta'] = df['Modelo']
+    df['modelo_alerta'] = df['Modelo'] if 'Modelo' in df.columns else '-'
+    if 'Modelo' not in df.columns:
+        df['Modelo'] = '-'
 
     # Converter numéricas
     df['km'] = pd.to_numeric(df['Km Rodado'], errors='coerce').fillna(0)
@@ -2114,7 +2105,9 @@ def preparar_df_dashboard(_df_internal):
         df['posto'] = 'Nao informado'
 
     if 'unidade' in df.columns:
-        df['unidade_alerta'] = df['unidade']
+        df['unidade_alerta'] = df['unidade'].fillna('-').astype(str)
+    elif 'unidade_alerta' not in df.columns:
+        df['unidade_alerta'] = '-'
     if 'ult_km' in df.columns:
         df['ult_km_alerta'] = df['ult_km']
     if 'km_atual' in df.columns:
@@ -2123,6 +2116,10 @@ def preparar_df_dashboard(_df_internal):
         df['produto_alerta'] = df['produto']
     if 'modelo' in df.columns:
         df['modelo_alerta'] = df['modelo']
+        if 'Modelo' not in df.columns:
+            df['Modelo'] = df['modelo'].astype(str)
+    if 'Modelo' not in df.columns:
+        df['Modelo'] = '-'
 
     if 'km_rodado' in df.columns:
         df['km'] = pd.to_numeric(df['km_rodado'], errors='coerce')
@@ -2359,7 +2356,10 @@ def carregar_dados_relatorio() -> pd.DataFrame:
 
 
 if not RELATORIO_DB.exists():
-    st.error(f"Banco de dados não encontrado: {RELATORIO_DB}")
+    st.error(
+        "Banco de dados não encontrado. "
+        "Importe os dados na página **Financeiro** e retorne aqui."
+    )
     st.stop()
 
 # Carrega a base completa (cacheada)
@@ -2846,12 +2846,27 @@ if st.session_state.resultado_processado is not None:
             if df_ocs_view.empty:
                 st.success("✅ Nenhuma ocorrência nessa faixa de gravidade.")
             else:
-                cols_show = [c for c in [
+                _ocs_rename = {
+                    'data_hora': 'Data/Hora', 'placa': 'Placa', 'modelo': 'Modelo',
+                    'condutor': 'Condutor', 'unidade': 'Unidade', 'litros': 'Litros',
+                    'km_l': 'KM/L', 'valor_observado': 'Valor Observado',
+                    'valor_referencia': 'Valor Referência', 'gravidade_final': 'Gravidade',
+                    'gravidade_inicial': 'Gravidade Inicial', 'codigo_regra': 'Regra',
+                    'tipo_ocorrencia': 'Tipo de Anomalia', 'descricao_tecnica': 'Evidência',
+                    'recomendacao': 'Recomendação',
+                }
+                _src_cols = [c for c in [
+                    'data_hora','placa','modelo','condutor','unidade',
                     'gravidade_final','gravidade_inicial','codigo_regra','tipo_ocorrencia',
-                    'placa','condutor','modelo','data_hora','litros','km_l',
-                    'valor_observado','valor_referencia','descricao_tecnica','recomendacao'
+                    'litros','km_l','valor_observado','valor_referencia','descricao_tecnica','recomendacao'
                 ] if c in df_ocs_view.columns]
-                render_dataframe_limited(df_ocs_view[cols_show].reset_index(drop=True))
+                _ocs_display = df_ocs_view[_src_cols].rename(columns=_ocs_rename).reset_index(drop=True)
+                if 'Data/Hora' in _ocs_display.columns:
+                    _ocs_display['Data/Hora'] = pd.to_datetime(_ocs_display['Data/Hora'], errors='coerce').dt.strftime('%d/%m/%Y %H:%M').fillna('-')
+                for _nc in ['Litros','KM/L','Valor Observado','Valor Referência']:
+                    if _nc in _ocs_display.columns:
+                        _ocs_display[_nc] = pd.to_numeric(_ocs_display[_nc], errors='coerce').round(2)
+                render_dataframe_limited(_ocs_display)
 
                 # Notificações — uma por acordeon
                 if notificacoes_agente:
@@ -2860,6 +2875,25 @@ if st.session_state.resultado_processado is not None:
                         label = f"{i}. Placa {notif.get('placa','?')} · {notif.get('condutor','?')} — {notif.get('gravidade_max','?')}"
                         with st.expander(label, expanded=False):
                             st.text_area("", value=notif.get('texto_notificacao', notif.get('minuta', '')), height=260, key=f"notif_{i}", label_visibility="collapsed")
+                            try:
+                                _word_bytes = build_notificacao_docx(
+                                    [notif],
+                                    metadata={
+                                        'municipio': st.session_state.get('municipio', ''),
+                                        'responsavel': st.session_state.get('responsavel', 'Departamento de Transportes'),
+                                    }
+                                )
+                                _placa_slug = str(notif.get('placa', 'notificacao')).replace(' ', '_')
+                                st.download_button(
+                                    "📄 Baixar Notificação (Word)",
+                                    data=_word_bytes,
+                                    file_name=f"notificacao_{_placa_slug}_{i}.docx",
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    key=f"dl_notif_word_{i}",
+                                    use_container_width=True,
+                                )
+                            except Exception as _e:
+                                st.warning(f"⚠️ Erro ao gerar Word: {_e}")
         else:
             st.success("✅ Nenhuma ocorrência identificada com os dados filtrados.")
 
@@ -2894,7 +2928,36 @@ if st.session_state.resultado_processado is not None:
         else:
             alert_df = alert_df.copy()
             freq_suspeita = freq_suspeita if freq_suspeita is not None else pd.DataFrame()
-            detalhes_freq = detalhes_freq if detalhes_freq is not None else pd.DataFrame()
+            # Garantir colunas derivadas para exibição (podem estar ausentes em cache antigo)
+            if 'data_hora' not in alert_df.columns:
+                alert_df['data_hora'] = pd.to_datetime(alert_df['data'], errors='coerce').dt.strftime('%d/%m/%Y %H:%M')
+            if 'data_dia' not in alert_df.columns:
+                alert_df['data_dia'] = pd.to_datetime(alert_df['data'], errors='coerce').dt.date
+            if 'ordem_abastecimento' not in alert_df.columns:
+                alert_df['ordem_abastecimento'] = alert_df.groupby('Placa').cumcount() + 1
+            if 'sequencia' not in alert_df.columns:
+                alert_df['sequencia'] = alert_df['ordem_abastecimento'].astype(str).radd('#')
+            if 'delta_min' not in alert_df.columns:
+                alert_df['delta_min'] = alert_df.groupby('Placa')['data'].diff().dt.total_seconds().div(60)
+            if 'km_atual_evento' not in alert_df.columns:
+                alert_df['km_atual_evento'] = pd.to_numeric(alert_df.get('km_atual_alerta', np.nan), errors='coerce')
+                alert_df['km_atual_evento'] = alert_df['km_atual_evento'].combine_first(
+                    pd.to_numeric(alert_df.get('km', np.nan), errors='coerce'))
+            if 'km_anterior' not in alert_df.columns:
+                alert_df['km_anterior'] = alert_df.groupby('Placa')['km_atual_evento'].shift(1)
+            if 'consumo_anterior' not in alert_df.columns:
+                alert_df['consumo_anterior'] = alert_df.groupby('Placa')['consumo'].shift(1)
+            if 'data_hora_anterior' not in alert_df.columns:
+                alert_df['data_hora_anterior'] = alert_df.groupby('Placa')['data_hora'].shift(1)
+            if 'posto_anterior' not in alert_df.columns:
+                alert_df['posto_anterior'] = alert_df.groupby('Placa')['posto'].shift(1)
+            if 'litros_anterior' not in alert_df.columns:
+                alert_df['litros_anterior'] = alert_df.groupby('Placa')['litros'].shift(1)
+            # Reconstruir detalhes_freq com todas as colunas atuais
+            if not freq_suspeita.empty and 'data_dia' in alert_df.columns:
+                detalhes_freq = alert_df.merge(freq_suspeita[['Placa', 'data_dia']], on=['Placa', 'data_dia'], how='inner')
+            else:
+                detalhes_freq = pd.DataFrame()
 
         sequenciais_alerta = alert_df[(alert_df['delta_min'].notna()) & (alert_df['delta_min'] < 60)].copy()
         proximo_delta = alert_df.groupby('Placa')['delta_min'].shift(-1)
@@ -2916,14 +2979,30 @@ if st.session_state.resultado_processado is not None:
         def _padronizar_alertas(df_src, colunas_alvo):
             if df_src is None or df_src.empty:
                 return pd.DataFrame(columns=colunas_alvo)
-            view = df_src.copy().rename(columns={
+            # Remover colunas que serão geradas pelo rename para evitar duplicatas
+            _to_drop = []
+            _rename_map = {
                 'sequencia': 'Sequência', 'data_hora_anterior': 'Data/Hora Anterior',
                 'data_hora': 'Data/Hora Atual', 'posto_anterior': 'Posto Anterior',
                 'posto': 'Posto Atual', 'delta_min': 'Intervalo (min)',
                 'litros_anterior': 'Litros Anterior', 'litros': 'Litros',
                 'km_anterior': 'KM Anterior', 'km_atual_evento': 'KM Atual',
                 'km': 'KM Rodados', 'consumo_anterior': 'KM/L Anterior', 'consumo': 'KM/L Atual',
-            })
+                'unidade_alerta': 'Unidade', 'modelo_alerta': 'Modelo',
+            }
+            # Se já existe a coluna destino E existe a coluna origem, dropar a coluna destino antes
+            src = df_src.copy()
+            for orig, dest in _rename_map.items():
+                if orig in src.columns and dest in src.columns and orig != dest:
+                    src = src.drop(columns=[dest])
+            view = src.rename(columns=_rename_map)
+            # Fallbacks para colunas que podem ter nomes alternativos
+            if 'Modelo' not in view.columns and 'modelo' in view.columns:
+                view['Modelo'] = view['modelo']
+            if 'Unidade' not in view.columns and 'unidade' in view.columns:
+                view['Unidade'] = view['unidade']
+            # Remover quaisquer duplicatas remanescentes (mantém a primeira)
+            view = view.loc[:, ~view.columns.duplicated()]
             if 'KM Esperado' in colunas_alvo:
                 view['KM Esperado'] = pd.to_numeric(view.get('Litros', np.nan), errors='coerce') * float(consumo_media_alertas)
             if 'Média' in colunas_alvo:
@@ -2934,10 +3013,12 @@ if st.session_state.resultado_processado is not None:
             cols_num = [c for c in ['Intervalo (min)','Litros','Litros Anterior','KM Anterior','KM Atual','KM Rodados','KM Esperado','Média','KM/L Anterior','KM/L Atual'] if c in colunas_alvo]
             for c in cols_num:
                 view[c] = pd.to_numeric(view[c], errors='coerce').round(2)
-            return view[colunas_alvo].sort_values(['Placa', 'Data/Hora Atual']).where(pd.notna(view[colunas_alvo]), '-')
+            # Ordena e substitui NaN por '-' sem desalinhar índice
+            _sorted = view[colunas_alvo].sort_values(['Placa', 'Data/Hora Atual'])
+            return _sorted.where(pd.notna(_sorted), '-')
 
-        col_mult = ['Placa','Sequência','Data/Hora Atual','Posto Atual','Condutor','KM Anterior','KM Atual','KM Rodados','Litros','KM/L Atual','Média']
-        col_seq  = ['Placa','Sequência','Data/Hora Anterior','Data/Hora Atual','Posto Anterior','Posto Atual','Condutor','Intervalo (min)','Litros Anterior','Litros','KM Rodados','KM/L Anterior','KM/L Atual']
+        col_mult = ['Placa','Modelo','Unidade','Sequência','Data/Hora Atual','Posto Atual','Condutor','KM Anterior','KM Atual','KM Rodados','Litros','KM/L Atual','Média']
+        col_seq  = ['Placa','Modelo','Unidade','Sequência','Data/Hora Anterior','Data/Hora Atual','Posto Anterior','Posto Atual','Condutor','Intervalo (min)','Litros Anterior','Litros','KM Rodados','KM/L Anterior','KM/L Atual']
 
         with st.expander("📌 Múltiplos abastecimentos no mesmo dia", expanded=True):
             if detalhes_freq.empty:
@@ -2953,32 +3034,37 @@ if st.session_state.resultado_processado is not None:
 
         st.divider()
 
-        # ── Timeline por placa ────────────────────────────────────
-        st.markdown("#### Timeline por Placa")
-        placas_disp = sorted(filtered_df['Placa'].dropna().astype(str).unique().tolist())
-        placa_sel = st.selectbox("Placa", placas_disp, key="sel_placa_tab3")
-        _tl_base = filtered_df[filtered_df['Placa'].astype(str) == str(placa_sel)].copy()
-        # Excluir registros com erro de km da timeline (consumo distorcido)
-        if '_erro_km' in _tl_base.columns:
-            _tl_base = _tl_base[~_tl_base['_erro_km']]
-        timeline_df = _tl_base.sort_values('data').copy()
-        if timeline_df.empty:
-            st.warning("Sem eventos válidos para esta placa (registros com erro de km foram excluídos).")
-        else:
+        # ── Timeline por placa (fragment: só re-executa este bloco ao mudar a placa) ──
+        @st.fragment
+        def _timeline_fragment():
+            _res = st.session_state.get('resultado_processado')
+            if _res is None:
+                return
+            _fdf = _res['filtered_df']
+            _limiar = _res['stats'].get('limiar_outlier', float('nan'))
+            _lim_ok = _limiar == _limiar  # False se NaN
+
+            st.markdown("#### Timeline por Placa")
+            placas_disp = sorted(_fdf['Placa'].dropna().astype(str).unique().tolist())
+            placa_sel = st.selectbox("Placa", placas_disp, key="sel_placa_tab3")
+            _tl_base = _fdf[_fdf['Placa'].astype(str) == str(placa_sel)]
+            timeline_df = _tl_base.sort_values('data').copy()
+            if timeline_df.empty:
+                st.warning("Sem dados para esta placa nos filtros aplicados.")
+                return
             timeline_df['consumo_num'] = pd.to_numeric(timeline_df['consumo'], errors='coerce')
-            # litros para tamanho do ponto — substitui zeros/NaN por mínimo válido para evitar erro no scatter
             _litros_raw = pd.to_numeric(timeline_df['litros'], errors='coerce').fillna(0)
             timeline_df['litros_size'] = _litros_raw.clip(lower=1)
-            _lim_ok = not pd.isna(limiar_outlier)
-            timeline_df['outlier'] = timeline_df['consumo_num'] < limiar_outlier if _lim_ok else False
+            timeline_df['outlier'] = timeline_df['consumo_num'] < _limiar if _lim_ok else False
+            timeline_df['_cor'] = timeline_df['outlier'].map({True: 'Outlier', False: 'Normal'})
 
             fig_tl = px.scatter(
                 timeline_df, x='data', y='consumo_num',
-                size='litros_size', color='outlier',
-                color_discrete_map={True: '#ef4444', False: '#38bdf8'},
+                size='litros_size', color='_cor',
+                color_discrete_map={'Normal': '#38bdf8', 'Outlier': '#ef4444'},
                 hover_data={'Placa': True, 'Condutor': True, 'posto': True,
                             'km': True, 'litros': True, 'consumo_num': True,
-                            'litros_size': False, 'outlier': False},
+                            'litros_size': False, '_cor': False, 'outlier': False},
                 title=f"Placa {placa_sel} — consumo ao longo do tempo",
                 template='plotly_dark',
             )
@@ -2986,28 +3072,25 @@ if st.session_state.resultado_processado is not None:
                 xaxis_title='Data', yaxis_title='KM/L',
                 paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(15,24,38,0.6)',
                 margin=dict(l=8, r=8, t=40, b=8),
-                showlegend=False,
+                showlegend=True, legend_title_text='',
             )
-            # Fixar eixo Y com base nos dados reais; só mostrar limiar se estiver dentro do range
             _y_vals = timeline_df['consumo_num'].dropna()
             if not _y_vals.empty:
-                _y_min = _y_vals.min()
-                _y_max = _y_vals.max()
+                _y_min, _y_max = _y_vals.min(), _y_vals.max()
                 _y_pad = max((_y_max - _y_min) * 0.15, 1)
-                _range_min = _y_min - _y_pad
-                _range_max = _y_max + _y_pad
-                fig_tl.update_yaxes(range=[_range_min, _range_max])
-                # Adiciona limiar apenas se visível no eixo
-                if _lim_ok and _range_min <= limiar_outlier <= _range_max:
-                    fig_tl.add_hline(y=limiar_outlier, line_dash='dash', line_color='#ef4444',
-                                     annotation_text=f'Limiar {limiar_outlier:.2f}',
+                _rmin, _rmax = _y_min - _y_pad, _y_max + _y_pad
+                fig_tl.update_yaxes(range=[_rmin, _rmax])
+                if _lim_ok and _rmin <= _limiar <= _rmax:
+                    fig_tl.add_hline(y=_limiar, line_dash='dash', line_color='#ef4444',
+                                     annotation_text=f'Limiar {_limiar:.2f}',
                                      annotation_position='bottom right')
             st.plotly_chart(fig_tl, use_container_width=True)
 
-            # ── Tabela de histórico da placa ──────────────────────
-            cols_tl = [c for c in ['data','Condutor','posto','ult_km_alerta','km_atual_alerta','km','litros','consumo_num'] if c in timeline_df.columns]
+            cols_tl = [c for c in ['data','Placa','Modelo','unidade_alerta','Condutor','posto',
+                                    'ult_km_alerta','km_atual_alerta','km','litros','consumo_num']
+                       if c in timeline_df.columns]
             tl_view = timeline_df[cols_tl].rename(columns={
-                'data': 'Data/Hora', 'posto': 'Posto',
+                'data': 'Data/Hora', 'posto': 'Posto', 'unidade_alerta': 'Unidade',
                 'ult_km_alerta': 'KM Anterior', 'km_atual_alerta': 'KM Atual',
                 'km': 'KM Rodados', 'litros': 'Litros', 'consumo_num': 'KM/L',
             })
@@ -3017,6 +3100,8 @@ if st.session_state.resultado_processado is not None:
             if 'Data/Hora' in tl_view.columns:
                 tl_view['Data/Hora'] = pd.to_datetime(tl_view['Data/Hora'], errors='coerce').dt.strftime('%d/%m/%Y %H:%M')
             st.dataframe(tl_view.reset_index(drop=True), use_container_width=True)
+
+        _timeline_fragment()
 
     # ══════════════════════════════════════════════════════════════
     # TAB 4 — Dados & Relatórios
@@ -3034,14 +3119,15 @@ if st.session_state.resultado_processado is not None:
                     tabela_base['Produto'] = pd.NA
             tabela_base['Produto'] = tabela_base['Produto'].replace(['None','none','nan','NaN',''], pd.NA).fillna('-').astype(str).str.strip()
 
-            colunas_base = ['data','Placa','Condutor','Marca','Modelo','posto','Produto','ult_km_alerta','km_atual_alerta','km','litros','consumo']
+            colunas_base = ['data','Placa','Modelo','unidade_alerta','Condutor','Marca','posto','Produto','ult_km_alerta','km_atual_alerta','km','litros','consumo']
             for c in colunas_base:
                 if c not in tabela_base.columns:
                     tabela_base[c] = pd.NA
             tabela_exibicao = tabela_base[[c for c in colunas_base if c in tabela_base.columns]].copy()
             tabela_exibicao = tabela_exibicao.rename(columns={
-                'data':'Data/Hora','posto':'Posto','ult_km_alerta':'KM Anterior',
-                'km_atual_alerta':'KM Atual','km':'KM Rodados','litros':'Litros','consumo':'KM/L',
+                'data':'Data/Hora','unidade_alerta':'Unidade','posto':'Posto',
+                'ult_km_alerta':'KM Anterior','km_atual_alerta':'KM Atual',
+                'km':'KM Rodados','litros':'Litros','consumo':'KM/L',
             })
             for col in ['KM Anterior','KM Atual','KM Rodados','Litros','KM/L']:
                 if col in tabela_exibicao.columns:

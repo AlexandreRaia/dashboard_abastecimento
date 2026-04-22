@@ -93,6 +93,9 @@ THRESHOLDS = {
     'minimo_historico_para_comparacao': 5,   # mín de registros históricos para R08/R09
     'fator_desvio_historico':         2.0,   # media + N*desvio para R08
     'desvio_km_esperado_pct':         40.0,  # % abaixo do km esperado para R09
+    # ── Validação de quilometragem ──────────────────────────────────────────
+    'km_rodado_max_valido':        2000,   # km entre abastecimentos acima disso = dado inválido
+    'km_atual_max_valido':       999_999,  # leitura de odômetro acima disso = impossível
 }
 
 # Ordem crescente de gravidade para comparações
