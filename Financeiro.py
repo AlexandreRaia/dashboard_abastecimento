@@ -152,28 +152,53 @@ def make_bar_gasto_por_mes_unificado(
 	)
 	# Limite mensal já calculado como meta_mensal
 	limite_mensal = meta_mensal
+	media_consumo = float(agrupado["valor_total_mes"].mean()) if not agrupado.empty else 0.0
+	n_bars = len(agrupado)
 
-	# Adiciona linha tracejada horizontal do limite
+	# Adiciona linha tracejada horizontal do limite (vermelho)
 	if limite_mensal > 0:
 		fig.add_shape(
 			type="line",
 			x0=-0.5,
-			x1=len(monthly_totals["periodo"]) - 0.5,
+			x1=n_bars - 0.5,
 			y0=limite_mensal,
 			y1=limite_mensal,
-			line=dict(color="#eab308", width=3, dash="dash"),
+			line=dict(color="#ef4444", width=3, dash="dash"),
 			xref="x",
 			yref="y",
 			layer="above"
 		)
-		# Adiciona uma scatter invisível para a legenda
+		# Scatter invisível para a legenda
 		fig.add_trace(
 			go.Scatter(
 				x=[None],
 				y=[None],
 				mode="lines",
-				line=dict(color="#eab308", width=3, dash="dash"),
+				line=dict(color="#ef4444", width=3, dash="dash"),
 				name="Limite mensal"
+			)
+		)
+
+	# Adiciona linha tracejada horizontal da média de consumo (amarelo)
+	if media_consumo > 0:
+		fig.add_shape(
+			type="line",
+			x0=-0.5,
+			x1=n_bars - 0.5,
+			y0=media_consumo,
+			y1=media_consumo,
+			line=dict(color="#eab308", width=2, dash="dot"),
+			xref="x",
+			yref="y",
+			layer="above"
+		)
+		fig.add_trace(
+			go.Scatter(
+				x=[None],
+				y=[None],
+				mode="lines",
+				line=dict(color="#eab308", width=2, dash="dot"),
+				name=f"Média de consumo ({currency(media_consumo)})"
 			)
 		)
 
@@ -225,7 +250,7 @@ def make_donut_combustivel(df_filtered: pd.DataFrame) -> go.Figure:
 		return apply_plotly_theme(fig)
 
 	by_fuel = df_filtered.groupby("combustivel", as_index=False).agg(litros=("litros", "sum"))
-	color_map = {"GASOLINA": "#2563eb", "ALCOOL": "#ff7f0e", "DIESEL": "#fb7185", "DIESEL S10": "#38bdf8"}
+	color_map = {"GASOLINA": "#2563eb", "ALCOOL": "#22c55e", "ETANOL": "#22c55e", "DIESEL": "#f97316", "DIESEL S10": "#f97316"}
 	fig = go.Figure(go.Pie(
 		labels=by_fuel["combustivel"],
 		values=by_fuel["litros"],
@@ -261,7 +286,7 @@ def make_donut_combustivel_valor(df_filtered: pd.DataFrame) -> go.Figure:
 		return apply_plotly_theme(fig)
 
 	by_fuel = df_filtered.groupby("combustivel", as_index=False).agg(valor=("valor", "sum"))
-	color_map = {"GASOLINA": "#2563eb", "ALCOOL": "#ff7f0e", "DIESEL": "#fb7185", "DIESEL S10": "#38bdf8"}
+	color_map = {"GASOLINA": "#2563eb", "ALCOOL": "#22c55e", "ETANOL": "#22c55e", "DIESEL": "#f97316", "DIESEL S10": "#f97316"}
 	fig = go.Figure(go.Pie(
 		labels=by_fuel["combustivel"],
 		values=by_fuel["valor"],
@@ -907,7 +932,7 @@ def make_bar_consumo_tipo_mes(df_filtered: pd.DataFrame) -> go.Figure:
 
     grupo["periodo"] = grupo.apply(lambda row: f"{corrige_mes_nome(row['mes_nome'])}/{int(row['ano'])}", axis=1)
 
-    color_map = {"GASOLINA": "#2563eb", "DIESEL": "#38bdf8", "ALCOOL": "#f97316"}
+    color_map = {"GASOLINA": "#2563eb", "DIESEL": "#f97316", "ALCOOL": "#22c55e"}
     fig = go.Figure()
     for fuel in ["GASOLINA", "DIESEL", "ALCOOL"]:
         dados = grupo[grupo["combustivel_grupo"] == fuel]
@@ -1204,7 +1229,7 @@ def make_bar_consumo_tipo_mes_litros(df_filtered: pd.DataFrame) -> go.Figure:
 
     grupo["periodo"] = grupo.apply(lambda row: f"{corrige_mes_nome(row['mes_nome'])}/{int(row['ano'])}", axis=1)
 
-    color_map = {"GASOLINA": "#2563eb", "DIESEL": "#38bdf8", "ALCOOL": "#f97316"}
+    color_map = {"GASOLINA": "#2563eb", "DIESEL": "#f97316", "ALCOOL": "#22c55e"}
     fig = go.Figure()
     for fuel in ["GASOLINA", "DIESEL", "ALCOOL"]:
         dados = grupo[grupo["combustivel_grupo"] == fuel]
@@ -1260,10 +1285,11 @@ def make_line_custo_medio_mes_combustivel(df_filtered: pd.DataFrame) -> go.Figur
     grupo["mes_label"] = grupo["mes"].apply(lambda m: MONTHS[m])
 
     color_map = {
-        "GASOLINA": "#38bdf8",
+        "GASOLINA": "#2563eb",
         "DIESEL": "#f97316",
         "DIESEL S10": "#f97316",
-        "ALCOOL": "#3b82f6",
+        "ALCOOL": "#22c55e",
+        "ETANOL": "#22c55e",
     }
     fig = go.Figure()
     for combustivel in grupo["combustivel"].unique():
@@ -1436,11 +1462,11 @@ def make_line_custo_medio_rl_combustivel(df_filtered: pd.DataFrame) -> go.Figure
     grupo = grupo.sort_values("mes")
 
     color_map = {
-        "GASOLINA": "#38bdf8",
+        "GASOLINA": "#2563eb",
         "DIESEL": "#f97316",
-        "DIESEL S10": "#fb923c",
-        "ALCOOL": "#a78bfa",
-        "ETANOL": "#a78bfa",
+        "DIESEL S10": "#f97316",
+        "ALCOOL": "#22c55e",
+        "ETANOL": "#22c55e",
     }
 
     fig = go.Figure()
@@ -1511,20 +1537,69 @@ def make_line_real_previsto_projecao(
 
     meses_previstos = [MONTHS[m] for m in range(1, 13)]
     acumulado_previsto = [previsto_mensal * (i + 1) for i in range(12)]
+    previsto_map = {mes: val for mes, val in zip(meses_previstos, acumulado_previsto)}
+
+    xs = mensal_real["mes_label"].tolist()
+    ys = mensal_real["acumulado_real"].tolist()
+    acima = [y > previsto_map.get(x, float("inf")) for x, y in zip(xs, ys)]
+    marker_colors = ["#ef4444" if a else "#22c55e" for a in acima]
 
     fig = go.Figure()
+
+    # Desenha segmentos: cada par de pontos consecutivos em verde ou vermelho
+    # Agrupa segmentos contíguos da mesma cor para minimizar traces
+    i = 0
+    legend_green_added = False
+    legend_red_added = False
+    while i < len(xs):
+        cor = "#ef4444" if acima[i] else "#22c55e"
+        nome = "Acima do previsto" if acima[i] else "Real acumulado"
+        show_legend = (acima[i] and not legend_red_added) or (not acima[i] and not legend_green_added)
+        # Coleta segmento contíguo da mesma cor
+        seg_x = [xs[i]]
+        seg_y = [ys[i]]
+        while i + 1 < len(xs) and acima[i + 1] == acima[i]:
+            i += 1
+            seg_x.append(xs[i])
+            seg_y.append(ys[i])
+        # Adiciona o primeiro ponto do próximo segmento para não haver lacuna na linha
+        if i + 1 < len(xs):
+            seg_x.append(xs[i + 1])
+            seg_y.append(ys[i + 1])
+        fig.add_trace(
+            go.Scatter(
+                x=seg_x,
+                y=seg_y,
+                mode="lines",
+                name=nome,
+                line={"color": cor, "width": 3},
+                showlegend=show_legend,
+                legendgroup=nome,
+                hoverinfo="skip",
+            )
+        )
+        if acima[i]:
+            legend_red_added = True
+        else:
+            legend_green_added = True
+        i += 1
+
+    # Marcadores e labels por cima (trace separado, sem linha)
     fig.add_trace(
         go.Scatter(
-            x=mensal_real["mes_label"],
-            y=mensal_real["acumulado_real"],
-            mode="lines+markers+text",
-            name="Real acumulado",
-            line={"color": "#23b5d3", "width": 3},
-            text=[f"{v:,.0f}".replace(",", ".") for v in mensal_real["acumulado_real"]],
+            x=xs,
+            y=ys,
+            mode="markers+text",
+            name="",
+            showlegend=False,
+            marker={"color": marker_colors, "size": 10, "line": {"color": "#fff", "width": 1}},
+            text=[f"{v:,.0f}".replace(",", ".") for v in ys],
             textposition="bottom center",
             textfont={"size": 14},
+            hovertemplate="<b>%{x}</b><br>Real acumulado: R$ %{y:,.2f}<extra></extra>",
         )
     )
+
     fig.add_trace(
         go.Scatter(
             x=meses_previstos,
@@ -1562,18 +1637,16 @@ def apply_discount(df: pd.DataFrame, discount_rate: float) -> pd.DataFrame:
 
 def apply_filters(
     df: pd.DataFrame,
-    selected_ano: str,
-    selected_mes: str,
+    data_inicio: datetime.date | None,
+    data_fim: datetime.date | None,
     selected_secretaria: str,
     selected_combustivel: str,
 ) -> pd.DataFrame:
     df_f = df.copy()
-    if selected_ano and selected_ano != "Todos":
-        df_f = df_f[df_f["ano"].astype(str) == str(selected_ano)]
-    if selected_mes and selected_mes != "Todos":
-        mes_num = next((k for k, v in MONTHS.items() if v == selected_mes), None)
-        if mes_num is not None:
-            df_f = df_f[df_f["mes"] == mes_num]
+    if data_inicio is not None:
+        df_f = df_f[df_f["data_hora"].dt.date >= data_inicio]
+    if data_fim is not None:
+        df_f = df_f[df_f["data_hora"].dt.date <= data_fim]
     if selected_secretaria and selected_secretaria != "Todas":
         df_f = df_f[df_f["secretaria"].str.upper() == selected_secretaria.upper()]
     if selected_combustivel and selected_combustivel != "Todos":
@@ -1687,31 +1760,42 @@ def run_dashboard() -> None:
 	# Opções dos selectboxes
 	secretaria_options = ["Todas"] + sorted(df_limits["secretaria"].dropna().unique().tolist())
 	combustivel_options = ["Todos"] + sorted(df_real["combustivel"].dropna().unique().tolist())
-	anos_disponiveis = ["Todos"] + sorted(df_real["ano"].dropna().unique().astype(str).tolist(), reverse=True)
-	meses_disponiveis = ["Todos"] + [MONTHS[m] for m in sorted(MONTHS.keys())]
 
-	# Data máxima para exibir no rodapé
+	# Datas disponíveis no banco
+	_raw_min = df_real["data_hora"].dt.date.min() if ("data_hora" in df_real.columns and not df_real.empty) else None
 	_raw_max = df_real["data_hora"].dt.date.max() if ("data_hora" in df_real.columns and not df_real.empty) else None
-	data_max = _raw_max if (isinstance(_raw_max, datetime.date) and not pd.isnull(_raw_max)) else None
+	data_min_db = _raw_min if (isinstance(_raw_min, datetime.date) and not pd.isnull(_raw_min)) else datetime.date(2024, 1, 1)
+	data_max = _raw_max if (isinstance(_raw_max, datetime.date) and not pd.isnull(_raw_max)) else datetime.date.today()
+	# Padrão: 1º de janeiro do ano corrente até o último dado disponível, tudo clampado nos limites do banco
+	_hoje = datetime.date.today()
+	_default_ini = max(datetime.date(_hoje.year, 1, 1), data_min_db)
+	_default_fim = data_max
 
 	with st.sidebar:
 		# ── Filtros ──
 		with st.expander("🔍 Filtros", expanded=False):
-			ano_default_idx = next((i for i, a in enumerate(anos_disponiveis) if a == str(datetime.date.today().year)), 0)
-			selected_ano = st.selectbox("Ano", anos_disponiveis, index=ano_default_idx, key="sel_ano")
-			selected_mes = st.selectbox("Mês", meses_disponiveis, index=0, key="sel_mes")
+			_periodo = st.date_input(
+				"Período",
+				value=(_default_ini, _default_fim),
+				min_value=data_min_db,
+				max_value=data_max,
+				format="DD/MM/YYYY",
+				key="sel_periodo",
+			)
+			data_inicio = _periodo[0] if isinstance(_periodo, (list, tuple)) and len(_periodo) >= 1 else None
+			data_fim = _periodo[1] if isinstance(_periodo, (list, tuple)) and len(_periodo) == 2 else None
 			selected_secretaria = st.selectbox("Unidade / Secretaria", secretaria_options, index=0, key="sel_sec")
 			selected_combustivel = st.selectbox("Produto (Combustível)", combustivel_options, index=0, key="sel_comb")
 
 			if st.button("🗑️ Limpar Filtros", use_container_width=True):
-				for k in ("sel_ano", "sel_mes", "sel_sec", "sel_comb"):
+				for k in ("sel_periodo", "sel_sec", "sel_comb"):
 					if k in st.session_state:
 						del st.session_state[k]
 				st.rerun()
 
 		# ── Alertas (computados com escopo do ano corrente, todas secretarias) ──
-		ano_corrente = str(datetime.date.today().year)
-		df_alert_base = apply_filters(df_real, ano_corrente, "Todos", "Todas", "Todos")
+		_ano_ini = datetime.date(datetime.date.today().year, 1, 1)
+		df_alert_base = apply_filters(df_real, _ano_ini, datetime.date.today(), "Todas", "Todos")
 		status_alerts = build_secretaria_status(df_alert_base, df_limits)
 
 		excedidas = status_alerts[status_alerts["status"].isin(["ESTOURO POR PRECO", "ESTOURO GERAL"])].copy() if "status" in status_alerts.columns else pd.DataFrame()
@@ -1911,10 +1995,10 @@ def run_dashboard() -> None:
 		)
 
 	# ── Filtrar dados conforme seleção ──
-	filtered = apply_filters(df_real, selected_ano, selected_mes, selected_secretaria, selected_combustivel)
+	filtered = apply_filters(df_real, data_inicio, data_fim, selected_secretaria, selected_combustivel)
 
-	# Para gráfico anual: sem filtro de ano/mês, só secretaria/combustivel
-	anual_scope = apply_filters(df_real, "Todos", "Todos", selected_secretaria, selected_combustivel)
+	# Para gráfico anual: sem filtro de período, só secretaria/combustivel
+	anual_scope = apply_filters(df_real, None, None, selected_secretaria, selected_combustivel)
 
 	limits_scope = df_limits.copy()
 	if selected_secretaria != "Todas":
@@ -1928,9 +2012,12 @@ def run_dashboard() -> None:
 	)
 
 	# ── Cabeçalho principal ──
-	ctx_parts = [selected_ano if selected_ano != "Todos" else "Todos os anos"]
-	if selected_mes != "Todos":
-		ctx_parts.append(selected_mes)
+	if data_inicio and data_fim:
+		ctx_parts = [f"{data_inicio.strftime('%d/%m/%Y')} → {data_fim.strftime('%d/%m/%Y')}"]
+	elif data_inicio:
+		ctx_parts = [f"A partir de {data_inicio.strftime('%d/%m/%Y')}"]
+	else:
+		ctx_parts = ["Todo o período"]
 	if selected_secretaria != "Todas":
 		ctx_parts.append(selected_secretaria)
 	if selected_combustivel != "Todos":
@@ -1964,8 +2051,7 @@ def run_dashboard() -> None:
 		bar_col, donut_col = st.columns([2, 1])
 		bar_col.plotly_chart(make_bar_consumo_tipo_mes(filtered), use_container_width=True, key="bar_combustivel_fin")
 		donut_col.plotly_chart(make_donut_combustivel_valor(filtered), use_container_width=True, key="donut_combustivel_valor")
-		col_previsto, col_custo = st.columns(2)
-		col_previsto.plotly_chart(
+		st.plotly_chart(
 			make_line_real_previsto_projecao(
 				filtered,
 				limits_scope,
@@ -1974,7 +2060,7 @@ def run_dashboard() -> None:
 			use_container_width=True,
 			key="line_real_previsto",
 		)
-		col_custo.plotly_chart(
+		st.plotly_chart(
 			make_line_custo_medio_rl_combustivel(filtered),
 			use_container_width=True,
 			key="line_custo_medio_rl",
