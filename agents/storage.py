@@ -181,8 +181,19 @@ class AgentStorageSQLite:
             conn = sqlite3.connect(caminho_db)
             cur = conn.cursor()
 
-            # Carrega lote em tabela temporaria
-            df_store.to_sql(tmp_table, conn, if_exists='replace', index=False)
+            # Carrega lote em tabela temporaria via SQL direto
+            # (pandas 3.0 mudou o controle de transações em to_sql,
+            #  causando "no such table" ao misturar cursor manual com to_sql)
+            cur.execute(f'DROP TABLE IF EXISTS {_q(tmp_table)}')
+            col_defs = ', '.join([f'{_q(c)} TEXT' for c in colunas])
+            cur.execute(f'CREATE TABLE {_q(tmp_table)} ({col_defs})')
+            placeholders = '(' + ','.join(['?' for _ in colunas]) + ')'
+            rows = [
+                tuple(None if (v is None or (isinstance(v, float) and v != v)) else str(v) for v in row)
+                for row in df_store.itertuples(index=False, name=None)
+            ]
+            cur.executemany(f'INSERT INTO {_q(tmp_table)} ({colunas_sql}) VALUES {placeholders}', rows)
+            conn.commit()
 
             # Cria tabela principal se ainda nao existir
             cur.execute(
@@ -223,6 +234,7 @@ class AgentStorageSQLite:
                     f'ON {_q(table_name)} ({_q("estabelecimento")})'
                 )
 
+            if chave_existente:
                 cur.execute(
                     f'INSERT OR IGNORE INTO {_q(table_name)} ({colunas_sql}) '
                     f'SELECT {colunas_sql} FROM {_q(tmp_table)}'

@@ -5,10 +5,12 @@ Contém:
 - COLUMN_MAP: mapeamento dos cabeçalhos do Excel para nomes internos padronizados.
 - TANK_CAPACITY: capacidade dos tanques por modelo de veículo (em litros).
 - MODEL_CANONICAL_DISPLAY: nome de exibição canônico de cada modelo.
+- BRAND_CANONICAL_MAP: nome de exibição canônico de cada marca.
 - THRESHOLDS: limiares configuráveis para as regras de auditoria.
 - GRAVIDADE_ORDEM: dicionário para ordenar gravidade (BAIXA < MEDIA < ALTA).
 - normalizar_texto(): remove acentos e coloca em minúsculas.
 - canonicalizar_modelo(): padroniza o nome do modelo do veículo.
+- canonicalizar_marca(): padroniza o nome da marca do veículo.
 """
 import unicodedata
 
@@ -59,22 +61,130 @@ TANK_CAPACITY = {
 }
 
 # Canonizacao de modelos para reduzir variacoes de escrita na base.
+# Chaves em minúsculas sem acentos. Ordem importa: padroes mais especificos
+# (multi-palavra) devem vir antes de seus substrings.
 MODEL_CANONICAL_DISPLAY = {
-    'mobi': 'Mobi',
-    'uno': 'Uno',
-    'ka': 'Ka',
-    'onix': 'Onix',
-    'spin': 'Spin',
-    'sandero': 'Sandero',
-    'logan': 'Logan',
-    'saveiro': 'Saveiro',
-    'strada': 'Strada',
-    'van': 'Van',
-    'master': 'Master',
-    'sprinter': 'Sprinter',
-    'caminhao': 'Caminhao',
-    'kombi': 'Kombi',
-    'ducato': 'Ducato',
+    # ── Padrões multi-palavra (antes dos substrings) ────────────────────────
+    'chery qq':      'Chery QQ',
+    'city class':    'City Class',
+    'partida fria':  'Partida Fria',
+    't cross':       'T-Cross',
+    'cb 500':        'CB 500X',
+    'vm 290':        'VM 290',
+    'gl 2.5':        'GL 2.5',
+    # ── Ford ────────────────────────────────────────────────────────────────
+    'cargo':         'Cargo',    # antes de 'argo'!
+    'fiesta':        'Fiesta',
+    'f12000':        'F-12000',
+    # ── Fiat ────────────────────────────────────────────────────────────────
+    'ducato':        'Ducato',
+    'strada':        'Strada',
+    'toro':          'Toro',
+    'cronos':        'Cronos',
+    'doblo':         'Doblo',
+    'palio':         'Palio',
+    'argo':          'Argo',
+    'mobi':          'Mobi',
+    'uno':           'Uno',
+    'trailblazer':   'Trailblazer',
+    'montana':       'Montana',
+    'meriva':        'Meriva',
+    'celta':         'Celta',
+    'onix':          'Onix',
+    'spin':          'Spin',
+    's10':           'S10',
+    # ── Chevrolet ───────────────────────────────────────────────────────────
+    'nxr':           'NXR 150',
+    'xre':           'XRE 300',
+    # ── Hyundai ─────────────────────────────────────────────────────────────
+    'hb20':          'HB20',
+    # ── Jeep ────────────────────────────────────────────────────────────────
+    'renegade':      'Renegade',
+    # ── Kia ─────────────────────────────────────────────────────────────────
+    'k25000':        'K2500',
+    'uk2500':        'UK2500',
+    # ── Mercedes-Benz ───────────────────────────────────────────────────────
+    'accelo':        'Accelo',
+    'atego':         'Atego',
+    'sprinter':      'Sprinter',
+    # ── Honda ───────────────────────────────────────────────────────────────
+    'frontier':      'Frontier',
+    # ── Peugeot ─────────────────────────────────────────────────────────────
+    'boxer':         'Boxer',
+    'partner':       'Partner',
+    # ── Renault ─────────────────────────────────────────────────────────────
+    'master':        'Master',
+    'duster':        'Duster',
+    'kwid':          'Kwid',
+    'sandero':       'Sandero',
+    'logan':         'Logan',
+    # ── Toyota ──────────────────────────────────────────────────────────────
+    'bandeirante':   'Bandeirante',
+    'corolla':       'Corolla',
+    'corola':        'Corolla',   # grafia errada na fonte
+    # ── Volkswagen ──────────────────────────────────────────────────────────
+    'constellation': 'Constellation',
+    'microonibus':   'Micro-Ônibus',  # antes de 'onibus'
+    'virtus':        'Virtus',
+    'voyage':        'Voyage',
+    'santana':       'Santana',
+    'saveiro':       'Saveiro',
+    'delivery':      'Delivery',
+    'express':       'Express',
+    'volare':        'Volare',    # também cobre 'MARCOPOLO VOLARE'
+    'kombi':         'Kombi',
+    'polo':          'Polo',
+    'gol':           'Gol',
+    # ── Volvo ───────────────────────────────────────────────────────────────
+    # ── Iveco ───────────────────────────────────────────────────────────────
+    'daily':         'Daily',
+    'tector':        'Tector',
+    'masca':         'Gran Micro',
+    # ── Chery ───────────────────────────────────────────────────────────────
+    'tigo':          'Tigo',
+    # ── Equipamentos / genéricos ────────────────────────────────────────────
+    'trator':        'Trator',
+    'gerador':       'Gerador',
+    'rocadeira':     'Roçadeira',
+    'maquina':       'Máquina',
+    'onibus':        'Ônibus',
+    'caminhao':      'Caminhão',
+    # ── Padrões curtos (por último para evitar falsos positivos) ────────────
+    'van':           'Van',
+    'ka':            'Ka',
+}
+
+# ---------------------------------------------------------------------------
+# Canonizacao de marcas para consolidar variações de grafia na base.
+# Chaves: texto normalizado (sem acentos, minúsculas).
+# ---------------------------------------------------------------------------
+BRAND_CANONICAL_MAP = {
+    'caoa chery':   'Chery',
+    'chery':        'Chery',
+    'chevrolet':    'Chevrolet',
+    'fiat':         'Fiat',
+    'ford':         'Ford',
+    'foton':        'Foton',
+    'honda':        'Honda',
+    'hyundai':      'Hyundai',
+    'i/ kia':       'Kia',
+    'iveco - fiat': 'Iveco',
+    'iveco':        'Iveco',
+    'jeep':         'Jeep',
+    'kia':          'Kia',
+    'marcopolo':    'Marcopolo',
+    'mercedes benz':  'Mercedes-Benz',
+    'mercedes-benz':  'Mercedes-Benz',
+    'mitsubishi':   'Mitsubishi',
+    'nissan':       'Nissan',
+    'outros':       'Outros',
+    'peugeot':      'Peugeot',
+    'randon':       'Randon',
+    'renault':      'Renault',
+    'stihl':        'Stihl',
+    'toyota':       'Toyota',
+    'volkswagen':   'Volkswagen',
+    'volvo':        'Volvo',
 }
 
 # ---------------------------------------------------------------------------
@@ -88,14 +198,20 @@ THRESHOLDS = {
     'limite_intervalo_horas':         4,     # intervalo < N h entre abastecimentos -> MEDIA
     'km_baixo_limite':                30,    # km rodado abaixo deste para...
     'litros_alto_limite':             40,    # ...litros acima deste -> ALTA
-    'tolerancia_valor_total':         0.10,  # R$ diferença tolerada em valor total
+    'tolerancia_valor_total_pct':     0.02,  # 2% de diferença tolerada em valor total (era fixo R$0,10)
+    'tolerancia_valor_total_abs':     0.50,  # piso absoluto: diferenças menores que R$0,50 ignoradas
     'tolerancia_preco_unitario':      0.05,  # R$/L tolerado no preço unitário
-    'minimo_historico_para_comparacao': 5,   # mín de registros históricos para R08/R09
-    'fator_desvio_historico':         2.0,   # media + N*desvio para R08
-    'desvio_km_esperado_pct':         40.0,  # % abaixo do km esperado para R09
-    # ── Validação de quilometragem ──────────────────────────────────────────
+    'minimo_historico_para_comparacao': 8,   # mín de registros históricos para R09/R10 (8 = ~2 meses)
+    'dias_historico_rolling':                90,  # janela móvel de dias para calcular médias (R03/R09/R10)
+    'usar_mad_outlier':               True,  # True = MAD robusto; False = mean±σ clássico
+    'fator_mad_historico':            3.0,   # fator k para MAD: mediana ± k*1.4826*MAD (R09)
+    'fator_desvio_historico':         2.0,   # fator σ para fallback mean±σ (R09 sem MAD)
+    'razao_km_rodado_esperado_min':     60.0,  # R10 dispara quando km_rodado < X% do km_esperado
+    # ── Validação de quilometragem e consumo ──────────────────────────────
     'km_rodado_max_valido':        2000,   # km entre abastecimentos acima disso = dado inválido
     'km_atual_max_valido':       999_999,  # leitura de odômetro acima disso = impossível
+    'consumo_max_valido':           30.0,  # km/L acima disso = hodômetro inválido (nenhum veículo terrestre supera isso)
+    'consumo_min_valido':             2.0,  # km/L abaixo disso = km zerado ou volume absurdo
 }
 
 # Ordem crescente de gravidade para comparações
@@ -124,3 +240,20 @@ def canonicalizar_modelo(valor) -> str:
         if chave in texto_norm:
             return nome
     return bruto
+
+
+def canonicalizar_marca(valor) -> str:
+    """Converte variações de marca para um nome canônico amigável.
+
+    Consolida duplicidades como 'MERCEDES BENZ' / 'MERCEDES-BENZ',
+    'IVECO' / 'IVECO - FIAT', 'CAOA CHERY' / 'CHERY', etc.
+    """
+    bruto = '' if valor is None else str(valor).strip()
+    if not bruto or bruto.lower() in ('nan', 'none', ''):
+        return ''
+
+    texto_norm = normalizar_texto(bruto)
+    if texto_norm in BRAND_CANONICAL_MAP:
+        return BRAND_CANONICAL_MAP[texto_norm]
+    # Fallback: Title Case do valor original
+    return bruto.title()

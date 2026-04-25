@@ -76,6 +76,26 @@ class OrchestradorAuditoria:
             log.append("▶ Fonte | Base historica validada (SQLite)")
             df_valido = df_raw.copy()
             rel_qualidade = []
+            # Mesmo com base pré-validada, inspeciona consumo calculado para
+            # detectar km/L impossíveis (> consumo_max_valido) e gerar ocorrências.
+            log.append("▶ Agente 2 | Validacao de Consumo (base pre-validada)")
+            _, falhas_consumo = _validacao.processar(df_valido)
+            rel_qualidade += [f for f in falhas_consumo if f.get('tipo', '').startswith('CONSUMO')]
+            if rel_qualidade:
+                log.append(f"  ⚠ {len(rel_qualidade)} falha(s) de consumo detectada(s).")
+            # Propagar _erro_km da validação de consumo para df_valido
+            import pandas as _pd
+            _consumo_max = float(__import__('agents.config', fromlist=['THRESHOLDS']).THRESHOLDS.get('consumo_max_valido', 30.0))
+            if 'consumo' in df_valido.columns:
+                _consumo_num = _pd.to_numeric(df_valido['consumo'], errors='coerce')
+                _mask_alto = _consumo_num.notna() & (_consumo_num > _consumo_max)
+                if '_erro_km' not in df_valido.columns:
+                    df_valido['_erro_km'] = False
+                # Converter para bool antes da atribuição (coluna pode vir como string do SQLite)
+                df_valido['_erro_km'] = df_valido['_erro_km'].map(
+                    lambda v: v if isinstance(v, bool) else str(v).strip().lower() == 'true'
+                ).astype(bool)
+                df_valido.loc[_mask_alto, '_erro_km'] = True
             sqlite_info = {
                 'status': 'NAO_APLICAVEL',
                 'rows_written': 0,
@@ -129,15 +149,45 @@ class OrchestradorAuditoria:
 
         # ── Agente 3: Regras operacionais ───────────────────────────────
         log.append("▶ Agente 3 | Motor de Regras Operacionais")
+        # Preparar histórico de 90 dias para o R03 calcular estatísticas por modelo
+        _df_hist_completo = self.metadata.get('df_historico_completo')
+        _df_hist_modelo = None
+        if _df_hist_completo is not None and not _df_hist_completo.empty:
+            from .config import COLUMN_MAP, THRESHOLDS
+            import pandas as _pd
+            _df_h = _df_hist_completo.rename(
+                columns={col: interno for col, interno in COLUMN_MAP.items() if col in _df_hist_completo.columns}
+            ).copy()
+            if 'data_hora' in _df_h.columns:
+                _df_h['data_hora'] = _pd.to_datetime(_df_h['data_hora'], errors='coerce')
+                _data_max = _df_h['data_hora'].max()
+                if _pd.notna(_data_max):
+                    _df_h = _df_h[_df_h['data_hora'] >= _data_max - _pd.Timedelta(days=int(THRESHOLDS.get('dias_historico_rolling', 90)))]
+            # Calcular consumo se não existir
+            if 'consumo' not in _df_h.columns and 'km_rodado' in _df_h.columns and 'litros' in _df_h.columns:
+                _df_h['consumo'] = _pd.to_numeric(_df_h['km_rodado'], errors='coerce') / _pd.to_numeric(_df_h['litros'], errors='coerce').replace(0, float('nan'))
+            if 'modelo_norm' not in _df_h.columns and 'modelo' in _df_h.columns:
+                from .config import normalizar_texto
+                _df_h['modelo_norm'] = _df_h['modelo'].apply(normalizar_texto)
+            _df_hist_modelo = _df_h
         regras_params = {
-            'outlier_sigma_mult': self.metadata.get('outlier_sigma_mult', None),
+            'outlier_sigma_mult':    self.metadata.get('outlier_sigma_mult', None),
+            'df_historico_modelo':   _df_hist_modelo,
         }
         ocs = _regras.processar(df_valido, params=regras_params)
         log.append(f"  ✔ {len(ocs)} ocorrencia(s) detectada(s) pelas regras basicas.")
 
         # ── Agente 4: Contexto histórico ────────────────────────────────
         log.append("▶ Agente 4 | Contexto Historico")
-        df_enr, ocs = _historico.processar(df_valido, ocs)
+        df_historico_completo = self.metadata.get('df_historico_completo')
+        
+        # Normalizar nomes de colunas se df_historico_completo nao foi processado por ingestion
+        if df_historico_completo is not None and not df_historico_completo.empty:
+            from .config import COLUMN_MAP
+            renomear_map = {col: interno for col, interno in COLUMN_MAP.items() if col in df_historico_completo.columns}
+            df_historico_completo = df_historico_completo.rename(columns=renomear_map)
+        
+        df_enr, ocs = _historico.processar(df_valido, ocs, df_historico=df_historico_completo)
         log.append(f"  ✔ {len(ocs)} ocorrencia(s) apos enriquecimento historico.")
 
         # ── Agente 5: Classificação ─────────────────────────────────────

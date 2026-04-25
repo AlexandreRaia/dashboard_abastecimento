@@ -163,6 +163,51 @@ class AgentValidacao:
                 })
 
         df_valido = df[mask_valido].copy().reset_index(drop=True)
+
+        # ── Consumo calculado fora da faixa fisiológica ──────────────────────
+        # O consumo é calculado no AgentIngestion (km_rodado / litros), portanto
+        # só pode ser validado aqui, depois da ingestão.
+        # Consumo > 100 km/L: hodômetro provavelmente zerado/errado — marca _erro_km.
+        # Consumo < 0.5 km/L: litros absurdamente altos ou km quase zero — marca _erro_km.
+        # Em ambos os casos o registro é mantido para o relatório de qualidade.
+        _consumo_max = float(THRESHOLDS.get('consumo_max_valido', 100.0))
+        _consumo_min = float(THRESHOLDS.get('consumo_min_valido', 0.5))
+        if 'consumo' in df_valido.columns:
+            _consumo_num = pd.to_numeric(df_valido['consumo'], errors='coerce')
+            _consumo_alto = _consumo_num.notna() & (_consumo_num > _consumo_max)
+            _consumo_baixo = _consumo_num.notna() & (_consumo_num > 0) & (_consumo_num < _consumo_min)
+            if '_erro_km' not in df_valido.columns:
+                df_valido['_erro_km'] = False
+            # Garante dtype bool antes de qualquer atribuição (coluna pode vir como string do SQLite)
+            df_valido['_erro_km'] = df_valido['_erro_km'].map(
+                lambda v: v if isinstance(v, bool) else str(v).strip().lower() == 'true'
+            ).astype(bool)
+            if _consumo_alto.any():
+                qtd = int(_consumo_alto.sum())
+                df_valido.loc[_consumo_alto, '_erro_km'] = True
+                falhas.append({
+                    'tipo': 'CONSUMO_IMPOSSIVEL_ALTO',
+                    'detalhe': (
+                        f"{qtd} registro(s) com consumo > {_consumo_max:.0f} km/L "
+                        f"(provável erro de hodômetro) — mantidos no relatório, excluídos dos gráficos."
+                    ),
+                    'quantidade': qtd,
+                    'gravidade': 'MEDIA',
+                })
+            if _consumo_baixo.any():
+                qtd = int(_consumo_baixo.sum())
+                # Não marca _erro_km — consumo baixo pode ser legítimo (baixa eficiência,
+                # trajeto curto, veículo pesado). Mantém na análise dos agentes e no gráfico.
+                falhas.append({
+                    'tipo': 'CONSUMO_BAIXO_OBSERVADO',
+                    'detalhe': (
+                        f"{qtd} registro(s) com consumo entre 0 e {_consumo_min:.1f} km/L "
+                        f"(possível km não atualizado ou veículo com baixa eficiência) — mantidos na análise."
+                    ),
+                    'quantidade': qtd,
+                    'gravidade': 'BAIXA',
+                })
+
         # Garantir que _erro_km seja sempre bool (pode chegar como string via SQLite)
         if '_erro_km' in df_valido.columns:
             df_valido['_erro_km'] = df_valido['_erro_km'].astype(bool)

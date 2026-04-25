@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 
 from .config import TANK_CAPACITY, THRESHOLDS
@@ -10,8 +11,18 @@ def _oc(codigo, tipo, descricao, gravidade, row,
         valor_observado, valor_referencia, evidencia, recomendacao):
     data = row.get('data_hora')
     litros = row.get('litros')
-    media_modelo = row.get('media_consumo_modelo')
-    km_esperado = (litros * media_modelo) if pd.notna(litros) and pd.notna(media_modelo) else pd.NA
+    media_referencia = row.get('media_consumo_modelo')
+    if pd.isna(media_referencia):
+        media_referencia = row.get('media_consumo')
+
+    desvio_referencia = row.get('desvio_consumo_modelo')
+    if pd.isna(desvio_referencia):
+        desvio_referencia = row.get('desvio_consumo')
+
+    km_esperado = row.get('km_esperado', pd.NA)
+    if pd.isna(km_esperado) and pd.notna(litros) and pd.notna(media_referencia):
+        km_esperado = litros * media_referencia
+
     return {
         'codigo_regra':    codigo,
         'placa':           row.get('placa', ''),
@@ -25,10 +36,10 @@ def _oc(codigo, tipo, descricao, gravidade, row,
         'km_esperado':     km_esperado,
         'km_l':            row.get('consumo', pd.NA),
         'litros':          litros if pd.notna(litros) else pd.NA,
-        'media':           media_modelo if pd.notna(media_modelo) else pd.NA,
+        'media':           media_referencia if pd.notna(media_referencia) else pd.NA,
         'min':             row.get('km_minimo', pd.NA),
         'max':             row.get('km_maximo', pd.NA),
-        'desvio':          row.get('desvio_consumo_modelo', pd.NA),
+        'desvio':          desvio_referencia if pd.notna(desvio_referencia) else pd.NA,
         'estabelecimento': row.get('estabelecimento', ''),
         'produto':         row.get('produto', ''),
         'tipo_ocorrencia': tipo,
@@ -62,16 +73,62 @@ class AgentRegras:
         # mas permanecem na base para exibição no relatório de qualidade.
         df_km_ok = df[~df['_erro_km'].astype(bool)].copy() if '_erro_km' in df.columns else df
 
+        # df_historico_modelo: base de 90 dias para calcular estatísticas por modelo no R03.
+        # Passado via params['df_historico_modelo'] pelo orchestrator.
+        df_hist_modelo = params.get('df_historico_modelo')
+
         ocs += self._r01_capacidade_tanque(df)          # litros — usa df completo
+        ocs += self._r00_consumo_impossivel(df)         # km/L absurdo — usa df completo antes de filtrar
         ocs += self._r02_consumo_fora_faixa(df_km_ok)   # consumo depende de km
-        ocs += self._r03_consumo_critico(df_km_ok, sigma_override=params.get('outlier_sigma_mult'))
+        ocs += self._r03_consumo_critico(
+            df_km_ok,
+            sigma_override=params.get('outlier_sigma_mult'),
+            df_historico=df_hist_modelo,
+        )
         ocs += self._r04_hodometro(df_km_ok)
         ocs += self._r05_km_incompativel(df_km_ok)
         ocs += self._r06_abastecimentos_proximos(df)    # intervalo de tempo — ok usar df completo
         ocs += self._r07_preco_acima_contratado(df)     # preço — independe de km
         ocs += self._r08_valor_inconsistente(df)        # valor — independe de km
+        ocs += self._r11_historico_insuficiente(df)     # aviso para placas sem histórico
         # R09 e R10 são gerados pelo AgentHistorico com dados de contexto
         return ocs
+
+    # ------------------------------------------------------------------
+    # R00 — Consumo km/L fisicamente impossível (hodômetro inválido)
+    # ------------------------------------------------------------------
+    def _r00_consumo_impossivel(self, df: pd.DataFrame) -> list:
+        res = []
+        consumo_max = float(THRESHOLDS.get('consumo_max_valido', 30.0))
+        if 'consumo' not in df.columns:
+            return res
+        df_alto = df[pd.to_numeric(df['consumo'], errors='coerce') > consumo_max].copy()
+        for _, row in df_alto.iterrows():
+            consumo_val = pd.to_numeric(row.get('consumo'), errors='coerce')
+            if pd.isna(consumo_val):
+                continue
+            res.append(_oc(
+                codigo='R00',
+                tipo='HODOMETRO_INVALIDO_CONSUMO_IMPOSSIVEL',
+                descricao=(
+                    f"Consumo de {consumo_val:.1f} km/L é fisicamente impossível para veículos terrestres "
+                    f"(limite: {consumo_max:.0f} km/L). Provável erro de leitura de hodômetro."
+                ),
+                gravidade='ALTA',
+                row=row,
+                valor_observado=f"{consumo_val:.1f} km/L",
+                valor_referencia=f"≤ {consumo_max:.0f} km/L",
+                evidencia=(
+                    f"km_rodado={row.get('km_rodado', 'N/A')} | "
+                    f"litros={row.get('litros', 'N/A')} | "
+                    f"consumo calculado={consumo_val:.1f} km/L"
+                ),
+                recomendacao=(
+                    "Verificar leitura do hodômetro na data do abastecimento. "
+                    "Solicitar conferência física do km_atual informado pelo motorista."
+                ),
+            ))
+        return res
 
     # ------------------------------------------------------------------
     # R01 — Capacidade do tanque
@@ -140,7 +197,7 @@ class AgentRegras:
     # ------------------------------------------------------------------
     # R03 — Rendimento criticamente baixo por outlier estatistico
     # ------------------------------------------------------------------
-    def _r03_consumo_critico(self, df: pd.DataFrame, sigma_override=None) -> list:
+    def _r03_consumo_critico(self, df: pd.DataFrame, sigma_override=None, df_historico=None) -> list:
         res = []
         if 'consumo' not in df.columns:
             return res
@@ -153,25 +210,41 @@ class AgentRegras:
                 pass
         min_amostra = int(THRESHOLDS.get('min_amostra_outlier_consumo', 5))
         fator_fallback = THRESHOLDS.get('fator_consumo_critico', 0.50)
+        consumo_max_valido = float(THRESHOLDS.get('consumo_max_valido', 100.0))
 
-        # Estatisticas por modelo para detectar outliers negativos de consumo.
-        if 'modelo_norm' in df.columns:
-            stats = (
-                df.groupby('modelo_norm', dropna=False)['consumo']
-                .agg(['mean', 'std', 'count'])
-                .reset_index()
-                .rename(columns={
-                    'mean': 'media_consumo_modelo',
-                    'std': 'desvio_consumo_modelo',
-                    'count': 'qtd_modelo',
+        # Estatísticas por modelo calculadas sobre o histórico de 90 dias (se disponível),
+        # não apenas sobre o recorte filtrado — evita viés de seleção de período.
+        df_stats_src = df_historico if df_historico is not None else df
+
+        if 'modelo_norm' in df_stats_src.columns and 'consumo' in df_stats_src.columns:
+            consumo_hist = pd.to_numeric(df_stats_src['consumo'], errors='coerce')
+            mask_val = consumo_hist.notna() & (consumo_hist > 0) & (consumo_hist <= consumo_max_valido)
+            if '_erro_km' in df_stats_src.columns:
+                mask_val &= ~df_stats_src['_erro_km'].astype(bool)
+            df_src_clean = df_stats_src.loc[mask_val, ['modelo_norm', 'consumo']].copy()
+            df_src_clean['consumo'] = consumo_hist.loc[mask_val]
+
+            def _stats_modelo(grp):
+                c = grp['consumo']
+                med = c.median()
+                mad = (c - med).abs().median()
+                return pd.Series({
+                    'media_consumo_modelo':  c.mean(),
+                    'mediana_consumo_modelo': med,
+                    'mad_consumo_modelo':    mad,
+                    'desvio_consumo_modelo': c.std(),
+                    'qtd_modelo':            len(c),
                 })
-            )
+
+            stats = df_src_clean.groupby('modelo_norm', dropna=False).apply(_stats_modelo).reset_index()
             df_ref = df.merge(stats, on='modelo_norm', how='left')
         else:
             df_ref = df.copy()
-            df_ref['media_consumo_modelo'] = pd.NA
-            df_ref['desvio_consumo_modelo'] = pd.NA
-            df_ref['qtd_modelo'] = 0
+            for col in ('media_consumo_modelo', 'mediana_consumo_modelo', 'mad_consumo_modelo',
+                        'desvio_consumo_modelo', 'qtd_modelo'):
+                df_ref[col] = pd.NA
+
+        usar_mad = bool(THRESHOLDS.get('usar_mad_outlier', True))
 
         for _, row in df_ref.iterrows():
             if not _ok(row, 'consumo'):
@@ -179,18 +252,44 @@ class AgentRegras:
 
             c = row['consumo']
 
-            qtd_modelo = row.get('qtd_modelo', 0)
-            media_m = row.get('media_consumo_modelo')
-            desvio_m = row.get('desvio_consumo_modelo')
+            qtd_modelo   = row.get('qtd_modelo', 0) or 0
+            mediana_m    = row.get('mediana_consumo_modelo')
+            mad_m        = row.get('mad_consumo_modelo')
+            media_m      = row.get('media_consumo_modelo')
+            desvio_m     = row.get('desvio_consumo_modelo')
 
-            usa_outlier = (
-                pd.notna(media_m)
+            usa_mad_modelo = (
+                usar_mad
+                and pd.notna(mediana_m)
+                and pd.notna(mad_m)
+                and mad_m > 0
+                and qtd_modelo >= min_amostra
+            )
+            usa_sigma_modelo = (
+                not usa_mad_modelo
+                and pd.notna(media_m)
                 and pd.notna(desvio_m)
                 and desvio_m > 0
                 and qtd_modelo >= min_amostra
             )
 
-            if usa_outlier:
+            if usa_mad_modelo:
+                # MAD robusto: insensível a outros outliers na amostra
+                escala_mad = 1.4826 * mad_m
+                limite = mediana_m - (n_sigma * escala_mad)
+                condicao_critica = c < limite
+                referencia = (
+                    f">= {limite:.2f} km/L "
+                    f"(mediana modelo {mediana_m:.2f} - {n_sigma:.1f}×1.4826×MAD {mad_m:.2f})"
+                )
+                evidencia = (
+                    f"Modelo: {row.get('modelo', row.get('modelo_norm', ''))} | "
+                    f"Base historica: {int(qtd_modelo)} registros | "
+                    f"Mediana: {mediana_m:.2f} km/L | MAD: {mad_m:.2f} | "
+                    f"Limiar MAD: {limite:.2f} km/L | "
+                    f"Consumo apurado: {c:.2f} km/L."
+                )
+            elif usa_sigma_modelo:
                 limite = media_m - (n_sigma * desvio_m)
                 condicao_critica = c < limite
                 referencia = (
@@ -355,31 +454,89 @@ class AgentRegras:
 
     # ------------------------------------------------------------------
     # R08 — Valor total inconsistente com Qtde x Vr. Unit.
+    #        Tolerância percentual (2%) com piso absoluto (R$0,50)
     # ------------------------------------------------------------------
     def _r08_valor_inconsistente(self, df: pd.DataFrame) -> list:
         res = []
-        tol = THRESHOLDS['tolerancia_valor_total']
+        tol_pct = THRESHOLDS.get('tolerancia_valor_total_pct', 0.02)
+        tol_abs = THRESHOLDS.get('tolerancia_valor_total_abs', 0.50)
         if not all(c in df.columns for c in ['valor_total', 'valor_unitario', 'litros']):
             return res
         for _, row in df.iterrows():
             if not _ok(row, 'valor_total', 'valor_unitario', 'litros'):
                 continue
             esperado = row['litros'] * row['valor_unitario']
+            if esperado <= 0:
+                continue
             diff = abs(row['valor_total'] - esperado)
-            if diff > tol:
+            # Tolerância = máximo entre 2% do valor esperado e piso de R$0,50
+            tol_efetiva = max(esperado * tol_pct, tol_abs)
+            if diff > tol_efetiva:
+                pct_diff = (diff / esperado) * 100
                 res.append(_oc(
                     'R08',
                     'inconsistencia de valor total',
                     (f"Valor informado (R$ {row['valor_total']:.2f}) difere "
-                     f"do esperado (R$ {esperado:.2f}) em R$ {diff:.2f}."),
+                     f"do esperado (R$ {esperado:.2f}) em R$ {diff:.2f} ({pct_diff:.1f}%)."),
                     'BAIXA', row,
                     f"R$ {row['valor_total']:.2f}",
-                    f"R$ {esperado:.2f} (Qtde x Vr. Unit.)",
+                    f"R$ {esperado:.2f} ± {tol_efetiva:.2f} ({tol_pct*100:.0f}% ou R$ {tol_abs:.2f})",
                     (f"Qtde: {row['litros']:.2f} L | "
                      f"Vr. Unit.: R$ {row['valor_unitario']:.4f} | "
                      f"Esperado: R$ {esperado:.2f} | "
                      f"Informado: R$ {row['valor_total']:.2f} | "
-                     f"Diferenca: R$ {diff:.2f}."),
+                     f"Diferenca: R$ {diff:.2f} ({pct_diff:.1f}%) | "
+                     f"Tolerancia: R$ {tol_efetiva:.2f}."),
                     "Verificar lancamento no sistema e confrontar com cupom fiscal.",
                 ))
+        return res
+
+    # ------------------------------------------------------------------
+    # R11 — Placa sem histórico suficiente para comparação estatística
+    # ------------------------------------------------------------------
+    def _r11_historico_insuficiente(self, df: pd.DataFrame) -> list:
+        """Gera alerta BAIXA para placas cujo histórico foi enriquecido mas é insuficiente.
+        Depende de 'contagem' (adicionada pelo AgentHistorico), portanto só ativa
+        quando o recorte já passou pelo agent histórico — aqui é um aviso preventivo
+        para placas que NÃO têm a coluna 'contagem' (sem histórico algum).
+        """
+        res = []
+        min_hist = THRESHOLDS.get('minimo_historico_para_comparacao', 8)
+        if 'placa' not in df.columns:
+            return res
+        # Se 'contagem' já existe (histórico processado), não duplicar aviso aqui
+        if 'contagem' in df.columns:
+            placas_sem_hist = (
+                df[df['contagem'].isna() | (df['contagem'] < min_hist)]
+                ['placa'].dropna().unique()
+            )
+        else:
+            placas_sem_hist = df['placa'].dropna().unique()
+
+        if len(placas_sem_hist) == 0:
+            return res
+
+        # Um alerta por placa, usando o primeiro registro
+        emitidas = set()
+        for _, row in df.iterrows():
+            placa = row.get('placa', '')
+            if placa not in placas_sem_hist or placa in emitidas:
+                continue
+            emitidas.add(placa)
+            contagem = row.get('contagem', 0) or 0
+            res.append(_oc(
+                'R11',
+                'historico insuficiente para comparacao estatistica',
+                (f"Placa {placa} possui apenas {int(contagem)} registro(s) nos ultimos "
+                 f"{THRESHOLDS.get('dias_historico_rolling', 90)} dias "
+                 f"(minimo: {min_hist}). Regras R09 e R10 nao foram aplicadas."),
+                'BAIXA', row,
+                f"{int(contagem)} registros historicos",
+                f">= {min_hist} registros",
+                (f"Placa: {placa} | "
+                 f"Registros nos ultimos {THRESHOLDS.get('dias_historico_rolling', 90)} dias: {int(contagem)} | "
+                 f"Minimo necessario: {min_hist}. "
+                 f"Recomenda-se auditoria manual deste veiculo."),
+                "Solicitar documentacao de uso do veiculo ao gestor responsavel.",
+            ))
         return res

@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from .config import COLUMN_MAP, normalizar_texto, canonicalizar_modelo
+from .config import COLUMN_MAP, normalizar_texto, canonicalizar_modelo, canonicalizar_marca
 
 
 class AgentIngestion:
@@ -70,6 +70,24 @@ class AgentIngestion:
             if col in df.columns:
                 df[col] = self._processar_numericos(df[col])
 
+        # --- Recalculo de km_rodado quando zerado ou ausente ---
+        # Se km_atual e ult_km estão disponíveis e km_rodado é 0/nulo, recalcula.
+        if 'km_rodado' in df.columns and 'km_atual' in df.columns and 'ult_km' in df.columns:
+            _km_invalido = df['km_rodado'].isna() | (df['km_rodado'] == 0)
+            _km_calculado = df['km_atual'] - df['ult_km']
+            _usavel = _km_invalido & _km_calculado.notna() & (_km_calculado > 0)
+            if _usavel.any():
+                df.loc[_usavel, 'km_rodado'] = _km_calculado[_usavel]
+                relatorio.append({
+                    'tipo': 'KM_RODADO_RECALCULADO',
+                    'detalhe': (
+                        f"{int(_usavel.sum())} registro(s) com km_rodado zerado/ausente recalculado(s) "
+                        f"a partir de km_atual − ult_km."
+                    ),
+                    'quantidade': int(_usavel.sum()),
+                    'gravidade': 'INFORMATIVO',
+                })
+
         # --- Consumo ---
         if 'km_l_informado' in df.columns and 'km_rodado' in df.columns and 'litros' in df.columns:
             calculado = df['km_rodado'] / df['litros'].replace(0, np.nan)
@@ -89,6 +107,9 @@ class AgentIngestion:
             df['modelo_original'] = df['modelo']
             df['modelo'] = df['modelo'].apply(canonicalizar_modelo)
             df['modelo_norm'] = df['modelo'].apply(normalizar_texto)
+
+        if 'marca' in df.columns:
+            df['marca'] = df['marca'].apply(canonicalizar_marca)
 
         # --- Campos temporais auxiliares ---
         if 'data_hora' in df.columns:

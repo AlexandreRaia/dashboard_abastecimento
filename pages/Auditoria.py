@@ -13,6 +13,10 @@ Executar com:
     streamlit run main.py
 """
 import sqlite3
+import smtplib
+import ssl
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import streamlit as st
 import streamlit.components.v1 as st_components
 import pandas as pd
@@ -26,7 +30,47 @@ from pathlib import Path
 from io import BytesIO
 
 from agents import OrchestradorAuditoria
-from agents.config import canonicalizar_modelo
+from agents.config import canonicalizar_modelo, canonicalizar_marca, THRESHOLDS as _CFG_THRESHOLDS
+
+
+def enviar_notificacao_email(notif: dict, smtp_config: dict) -> tuple:
+    """
+    Envia o texto da notificação por e-mail via SMTP.
+    Retorna (sucesso: bool, mensagem_erro: str).
+    """
+    try:
+        host        = smtp_config['host'].strip()
+        port        = int(smtp_config['port'])
+        remetente   = smtp_config['remetente'].strip()
+        senha       = smtp_config['senha']
+        destinatario = smtp_config['destinatario'].strip()
+        usar_ssl    = smtp_config.get('usar_ssl', True)
+
+        placa  = notif.get('placa', '?')
+        grav   = notif.get('gravidade_max', '?')
+        corpo  = notif.get('texto_notificacao', notif.get('minuta', ''))
+
+        msg = MIMEMultipart()
+        msg['From']    = remetente
+        msg['To']      = destinatario
+        msg['Subject'] = f"Notificação de Frota — Placa {placa} [{grav}]"
+        msg.attach(MIMEText(corpo, 'plain', 'utf-8'))
+
+        context = ssl.create_default_context()
+        if usar_ssl:
+            with smtplib.SMTP_SSL(host, port, context=context) as server:
+                server.login(remetente, senha)
+                server.sendmail(remetente, [destinatario], msg.as_string())
+        else:
+            with smtplib.SMTP(host, port) as server:
+                server.ehlo()
+                server.starttls(context=context)
+                server.login(remetente, senha)
+                server.sendmail(remetente, [destinatario], msg.as_string())
+
+        return True, ''
+    except Exception as exc:
+        return False, str(exc)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent  # raiz do projeto
 RELATORIO_DB = PROJECT_ROOT / "relatorio.db"            # fonte somente-leitura
@@ -44,6 +88,7 @@ VEHICLE_TANK_CAPACITIES = {
     'Master': 105,
     'Van': 105,
     'Caminhão': 120,
+    'Doblô': 60,
 }
 
 # Helper function for robust date processing
@@ -77,14 +122,21 @@ def safe_index(options, value):
 
 def render_dataframe_limited(df: pd.DataFrame, max_rows: int = MAX_RENDER_ROWS):
     total_rows = len(df)
+
+    def _render(data: pd.DataFrame):
+        try:
+            st.dataframe(data, use_container_width=True, hide_index=True)
+        except TypeError:
+            st.dataframe(data, use_container_width=True)
+
     if total_rows > max_rows:
         st.warning(
             f"Exibicao limitada a {max_rows:,} linhas para evitar travamento da interface. "
             f"Total disponivel: {total_rows:,} linhas.".replace(',', '.')
         )
-        st.dataframe(df.head(max_rows), use_container_width=True)
+        _render(df.head(max_rows))
     else:
-        st.dataframe(df, use_container_width=True)
+        _render(df)
 
 
 @st.cache_data(show_spinner=False)
@@ -934,15 +986,20 @@ def apply_filters(df, filtros, fuel_map):
         base_df = base_df[base_df['Marca'].astype(str) == marca_filter]
 
     modelo_filter = filtros.get('modelo', 'Todos')
-    if isinstance(modelo_filter, list):
-        modelo_filter = modelo_filter[0] if modelo_filter else 'Todos'
-    if modelo_filter != 'Todos':
-        alvo_modelo = canonicalizar_modelo(modelo_filter)
+    if isinstance(modelo_filter, str):
+        modelos_alvo = [] if modelo_filter == 'Todos' else [modelo_filter]
+    elif isinstance(modelo_filter, (list, tuple, set)):
+        modelos_alvo = [m for m in modelo_filter if str(m).strip() and str(m) != 'Todos']
+    else:
+        modelos_alvo = []
+
+    if modelos_alvo:
+        modelos_norm = {canonicalizar_modelo(m) for m in modelos_alvo}
         if 'modelo_norm' in base_df.columns:
-            base_df = base_df[base_df['modelo_norm'] == alvo_modelo]
+            base_df = base_df[base_df['modelo_norm'].isin(modelos_norm)]
         else:
             base_df = base_df[
-                base_df['Modelo'].astype(str).apply(canonicalizar_modelo) == alvo_modelo
+                base_df['Modelo'].astype(str).apply(canonicalizar_modelo).isin(modelos_norm)
             ]
 
     condutor_filter = filtros.get('condutor', 'Todos')
@@ -957,8 +1014,32 @@ def apply_filters(df, filtros, fuel_map):
     if placa_filter != 'Todos':
         base_df = base_df[base_df['Placa'] == placa_filter]
 
-    modelo_filter_list = [] if modelo_filter == 'Todos' else [modelo_filter]
+    modelo_filter_list = modelos_alvo
     return base_df, modelo_filter_list
+
+
+def _filtros_ui_hashable(filtros_ui: dict) -> tuple:
+    """Converte dicionário de filtros para formato hashable (cache-friendly)."""
+    items = []
+    for key, value in filtros_ui.items():
+        if isinstance(value, list):
+            items.append((key, tuple(value)))
+        else:
+            items.append((key, value))
+    return tuple(items)
+
+
+def _format_modelo_filter_value(value) -> str:
+    if isinstance(value, (list, tuple, set)):
+        vals = [str(v) for v in value if str(v).strip()]
+        if not vals:
+            return 'Todos'
+        if len(vals) <= 3:
+            return ', '.join(vals)
+        return f"{len(vals)} modelos"
+    if not value or str(value) == 'Todos':
+        return 'Todos'
+    return str(value)
 
 
 @st.cache_data(show_spinner=False, ttl=300, max_entries=128)
@@ -1069,7 +1150,7 @@ def build_auditoria_analitica_excel(filtered_df, resultado_auditoria, filtros_ui
         criterios = pd.DataFrame([
             {'Parâmetro': 'Combustível', 'Valor': (filtros_ui or {}).get('fuel', 'Todos')},
             {'Parâmetro': 'Marca', 'Valor': (filtros_ui or {}).get('marca', 'Todos')},
-            {'Parâmetro': 'Modelo', 'Valor': (filtros_ui or {}).get('modelo', 'Todos')},
+            {'Parâmetro': 'Modelo', 'Valor': _format_modelo_filter_value((filtros_ui or {}).get('modelo', 'Todos'))},
             {'Parâmetro': 'Condutor', 'Valor': (filtros_ui or {}).get('condutor', 'Todos')},
             {'Parâmetro': 'Placa', 'Valor': filtro_placa},
             {'Parâmetro': 'Período', 'Valor': str((filtros_ui or {}).get('periodo', 'Todos'))},
@@ -1248,7 +1329,7 @@ def build_auditoria_analitica_pdf(filtered_df, resultado_auditoria, filtros_ui, 
     criterios = [
         f"Combustível: {(filtros_ui or {}).get('fuel', 'Todos')}",
         f"Marca: {(filtros_ui or {}).get('marca', 'Todos')}",
-        f"Modelo: {(filtros_ui or {}).get('modelo', 'Todos')}",
+        f"Modelo: {_format_modelo_filter_value((filtros_ui or {}).get('modelo', 'Todos'))}",
         f"Condutor: {(filtros_ui or {}).get('condutor', 'Todos')}",
         f"Placa: {filtro_placa}",
         f"Período: {(filtros_ui or {}).get('periodo', 'Todos')}",
@@ -1927,9 +2008,11 @@ def build_ocorrencias_pdf_report(df_ocs):
 def load_and_process_data(uploaded_file):
     df = pd.read_excel(BytesIO(uploaded_file))
 
-    # Canoniza variacoes de modelo para melhorar consistencia dos filtros.
+    # Canoniza variacoes de modelo e marca para melhorar consistencia dos filtros.
     if 'Modelo' in df.columns:
         df['Modelo'] = df['Modelo'].apply(canonicalizar_modelo)
+    if 'Marca' in df.columns:
+        df['Marca'] = df['Marca'].apply(canonicalizar_marca)
     
     # Converter para datetime usando dayfirst=True
     date_col_candidates = ['Data', 'Data/Hora', 'data', 'data_hora', 'Data Abastecimento']
@@ -2073,7 +2156,7 @@ def preparar_df_dashboard(_df_internal):
         df['Modelo'] = df['modelo'].astype(str)
         df['modelo_norm'] = df['Modelo'].apply(canonicalizar_modelo)
     if 'marca' in df.columns:
-        df['Marca'] = df['marca'].astype(str)
+        df['Marca'] = df['marca'].apply(canonicalizar_marca)
 
     if 'produto' in df.columns:
         df['combustivel'] = df['produto'].astype(str)
@@ -2276,6 +2359,12 @@ st.markdown(
         padding-top: 8px;
         border-top: 1px solid rgba(142,163,190,0.15);
     }
+
+    section[data-testid="stSidebar"] [data-testid="stSidebarNav"] .sidebar-brand {
+        margin: 8px 0 10px 0;
+        padding: 8px 0 12px 0;
+        background: transparent;
+    }
     .alert-card {
         display: flex;
         align-items: center;
@@ -2308,6 +2397,13 @@ if 'filtros_aplicados' not in st.session_state:
     st.session_state.filtros_aplicados = {}
 if 'resultado_processado' not in st.session_state:
     st.session_state.resultado_processado = None
+_MONTHS = {
+    1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+    5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+    9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
+}
+_MONTH_NAME_TO_NUMBER = {v: k for k, v in _MONTHS.items()}
+
 if 'upload_hash' not in st.session_state:
     st.session_state.upload_hash = None
 if 'ultima_carga' not in st.session_state:
@@ -2316,8 +2412,10 @@ if 'active_db_path' not in st.session_state:
     st.session_state.active_db_path = str(RESULTADOS_DB)
 if 'filtros_ui' not in st.session_state:
     st.session_state.filtros_ui = {
-        'ano': 'Todos',
-        'mes': 'Todos',
+        'ano': str(datetime.now().year),
+        'mes': _MONTHS[datetime.now().month],
+        'fuel': 'Todos',
+        'unidade': 'Todas',
         'marca': 'Todos',
         'modelo': 'Todos',
         'condutor': 'Todos',
@@ -2370,7 +2468,18 @@ if df_raw_relatorio.empty:
     st.stop()
 
 # Processa pelo pipeline de agentes (ingestão + validação → SQLite de resultados)
-_fonte_hash = str(len(df_raw_relatorio))
+# Hash baseado em conteúdo: conta + checksum das primeiras/últimas linhas + data máxima.
+# Evita reuso de cache quando o número de linhas é igual mas o conteúdo mudou.
+_hash_parts = [
+    str(len(df_raw_relatorio)),
+    str(pd.util.hash_pandas_object(df_raw_relatorio.head(5)).sum()),
+    str(pd.util.hash_pandas_object(df_raw_relatorio.tail(5)).sum()),
+]
+if 'Data/Hora' in df_raw_relatorio.columns:
+    _hash_parts.append(str(df_raw_relatorio['Data/Hora'].max()))
+elif 'data_hora' in df_raw_relatorio.columns:
+    _hash_parts.append(str(df_raw_relatorio['data_hora'].max()))
+_fonte_hash = "|".join(_hash_parts)
 if st.session_state.df_hist_cache is None or st.session_state.upload_hash != _fonte_hash:
     with st.spinner("Processando pipeline de auditoria..."):
         orq_carga = OrchestradorAuditoria(metadata={
@@ -2421,6 +2530,39 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Move o bloco de marca para dentro da navegação da sidebar (acima dos links).
+st_components.html(
+        """
+        <script>
+        (function() {
+            const doc = window.parent.document;
+
+            function moveBrandToNav() {
+                const sidebar = doc.querySelector('section[data-testid="stSidebar"]');
+                if (!sidebar) return;
+
+                const nav = sidebar.querySelector('[data-testid="stSidebarNav"]');
+                const brand = sidebar.querySelector('.sidebar-brand[data-brand="auditoria"]');
+                if (!nav || !brand) return;
+
+                if (brand.parentElement !== nav) {
+                    nav.insertBefore(brand, nav.firstChild);
+                }
+            }
+
+            moveBrandToNav();
+
+            const obs = new MutationObserver(moveBrandToNav);
+            obs.observe(doc.body, { childList: true, subtree: true });
+
+            // Evita observer permanente; Streamlit reexecuta o script quando necessário.
+            setTimeout(() => obs.disconnect(), 8000);
+        })();
+        </script>
+        """,
+        height=0,
+)
+
 if df_hist is None or df_hist.empty:
     st.warning("Nenhum dado processado ainda. Tente recarregar a página.")
     st.stop()
@@ -2434,13 +2576,6 @@ if df.empty:
 # SEÇÃO DE FILTROS
 # ═════════════════════════════════════════════════════════════════
 
-_MONTHS = {
-    1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
-    5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
-    9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
-}
-_MONTH_NAME_TO_NUMBER = {v: k for k, v in _MONTHS.items()}
-
 fuel_map = {
     'Gasolina': 'gasolina',
     'Alcool': 'alcool',
@@ -2452,7 +2587,7 @@ filtros_ui = st.session_state.filtros_ui
 anos_disponiveis = ["Todos"] + sorted(
     df['ano'].dropna().unique().astype(int).astype(str).tolist(), reverse=True
 ) if 'ano' in df.columns else ["Todos"]
-fuel_options = ["Todos"] + sorted(df['combustivel'].dropna().unique().tolist()) if 'combustivel' in df.columns else ["Todos", "Gasolina", "Alcool", "DIESEL S10"]
+fuel_options = ["Todos"] + sorted(list(fuel_map.keys()))
 unidade_options = ["Todas"] + sorted(df['unidade_alerta'].dropna().astype(str).unique().tolist()) if 'unidade_alerta' in df.columns else ["Todas"]
 meses_disponiveis = ["Todos"] + [_MONTHS[m] for m in sorted(_MONTHS.keys())]
 marca_options = ["Todos"] + sorted(df['Marca'].dropna().astype(str).unique().tolist()) if 'Marca' in df.columns else ["Todos"]
@@ -2466,17 +2601,17 @@ modelos_norm = (
     df_modelos_filtro['Modelo'].dropna().astype(str).str.strip()
     .replace('', pd.NA).dropna().apply(canonicalizar_modelo)
 ) if 'Modelo' in df_modelos_filtro.columns else pd.Series(dtype=str)
-modelo_options = ["Todos"] + sorted(modelos_norm.dropna().unique().tolist())
+modelo_options = sorted(modelos_norm.dropna().unique().tolist())
 
 # Índices padrão
 _ano_default = filtros_ui.get('ano', str(datetime.now().year))
 _ano_idx = anos_disponiveis.index(_ano_default) if _ano_default in anos_disponiveis else 0
 
 with st.sidebar:
-    # ── Brand ──
+    # ── Brand (topo fixo) ──
     st.markdown(
         """
-        <div class="sidebar-brand">
+        <div class="sidebar-brand" data-brand="auditoria">
             <span class="sidebar-brand-icon">🔍</span>
             <div>
                 <div class="sidebar-brand-title">AUDITORIA DE FROTA</div>
@@ -2490,8 +2625,30 @@ with st.sidebar:
     with st.expander("🔍 Filtros", expanded=False):
         selected_ano = st.selectbox("Ano", anos_disponiveis, index=_ano_idx, key="aud_sel_ano")
         selected_mes = st.selectbox("Mês", meses_disponiveis, index=safe_index(meses_disponiveis, filtros_ui.get('mes', 'Todos')), key="aud_sel_mes")
+        selected_fuel = st.selectbox("Combustível", fuel_options, index=safe_index(fuel_options, filtros_ui.get('fuel', 'Todos')), key="aud_sel_fuel")
+        selected_unidade = st.selectbox("Secretaria", unidade_options, index=safe_index(unidade_options, filtros_ui.get('unidade', 'Todas')), key="aud_sel_unidade")
         selected_marca = st.selectbox("Marca", marca_options, index=safe_index(marca_options, filtros_ui.get('marca', 'Todos')), key="aud_sel_marca")
-        selected_modelo = st.selectbox("Modelo", modelo_options, index=safe_index(modelo_options, filtros_ui.get('modelo', 'Todos')), key="aud_sel_modelo")
+
+        _modelo_default_raw = filtros_ui.get('modelo', 'Todos')
+        if isinstance(_modelo_default_raw, str):
+            _modelos_default = [] if _modelo_default_raw == 'Todos' else [_modelo_default_raw]
+        elif isinstance(_modelo_default_raw, (list, tuple, set)):
+            _modelos_default = [m for m in _modelo_default_raw if m in modelo_options]
+        else:
+            _modelos_default = []
+
+        if st.button("Selecionar todos os modelos da marca", use_container_width=True, key="aud_sel_all_modelos"):
+            st.session_state["aud_sel_modelos"] = modelo_options
+            st.rerun()
+
+        selected_modelos = st.multiselect(
+            "Modelos (pode selecionar vários)",
+            options=modelo_options,
+            default=_modelos_default,
+            key="aud_sel_modelos",
+            help="Deixe vazio para considerar todos os modelos da marca/período.",
+        )
+
         selected_condutor = st.selectbox("Motorista", cond_options, index=safe_index(cond_options, filtros_ui.get('condutor', 'Todos')), key="aud_sel_condutor")
         selected_placa = st.selectbox("Placa", placa_options, index=safe_index(placa_options, filtros_ui.get('placa', 'Todos')), key="aud_sel_placa")
         sigma_mult = st.slider(
@@ -2507,8 +2664,8 @@ with st.sidebar:
         with col_lim:
             if st.button("🗑️ Limpar", use_container_width=True):
                 st.session_state.filtros_ui = {
-                    'ano': 'Todos', 'mes': 'Todos', 'marca': 'Todos',
-                    'modelo': 'Todos', 'condutor': 'Todos', 'placa': 'Todos',
+                    'ano': 'Todos', 'mes': 'Todos', 'fuel': 'Todos', 'unidade': 'Todas',
+                    'marca': 'Todos', 'modelo': 'Todos', 'condutor': 'Todos', 'placa': 'Todos',
                 }
                 st.session_state.resultado_processado = None
                 st.rerun()
@@ -2523,11 +2680,14 @@ with st.sidebar:
 
 if aplicar_filtros:
     st.session_state.outlier_sigma_mult = float(sigma_mult)
+    _modelo_to_store = selected_modelos if selected_modelos else 'Todos'
     st.session_state.filtros_ui = {
         'ano': selected_ano,
         'mes': selected_mes,
+        'fuel': selected_fuel,
+        'unidade': selected_unidade,
         'marca': selected_marca,
-        'modelo': selected_modelo,
+        'modelo': _modelo_to_store,
         'condutor': selected_condutor,
         'placa': selected_placa,
     }
@@ -2540,7 +2700,7 @@ if aplicar_filtros:
     )
     filtered_df_submit, modelo_filter_list_submit = apply_filters_cached(
         df,
-        tuple(st.session_state.filtros_ui.items()),
+        _filtros_ui_hashable(st.session_state.filtros_ui),
         tuple(fuel_map.items()),
         data_version,
     )
@@ -2557,10 +2717,11 @@ if aplicar_filtros:
             analise_limitada = False
             filtered_df_analise = filtered_df_submit
 
-            # Estatísticas apenas sobre consumo no range válido (0 < consumo <= 100 km/L)
-            # Exclui km zerado (consumo <= 0) e hodômetros absurdos (consumo > 100)
-            _CONSUMO_MAX_VALIDO = 100.0
+            # Estatísticas apenas sobre consumo no range válido
+            # Exclui km zerado/inválido (< mín) e hodômetros absurdos (> máx)
+            _CONSUMO_MAX_VALIDO = float(_CFG_THRESHOLDS.get('consumo_max_valido', 30.0))
             _consumo_serie = pd.to_numeric(filtered_df_analise['consumo'], errors='coerce')
+            # Exclui apenas consumo impossível (> máx) e consumo zero/nulo. Mantém baixos.
             _consumo_ok = _consumo_serie[(_consumo_serie > 0) & (_consumo_serie <= _CONSUMO_MAX_VALIDO)].dropna()
             media = _consumo_ok.mean()
             desvio = _consumo_ok.std()
@@ -2585,45 +2746,36 @@ if aplicar_filtros:
 
             df_outliers_only = df_outliers[df_outliers['outlier']].copy()
             if not df_outliers_only.empty:
-                df_outliers_only['Data/Hora'] = pd.to_datetime(df_outliers_only['data'], errors='coerce').dt.strftime('%d/%m/%Y %H:%M')
-                df_outliers_only['Motorista'] = df_outliers_only.get('Condutor', np.nan)
-                df_outliers_only['Unidade'] = df_outliers_only.get('unidade_alerta', np.nan)
-                df_outliers_only['KM Anterior'] = pd.to_numeric(df_outliers_only.get('ult_km_alerta', np.nan), errors='coerce')
-                df_outliers_only['KM Atual'] = pd.to_numeric(df_outliers_only.get('km_atual_alerta', np.nan), errors='coerce')
+                df_outliers_only['Data/Hora']  = pd.to_datetime(df_outliers_only['data'], errors='coerce').dt.strftime('%d/%m/%Y %H:%M')
+                df_outliers_only['Condutor']   = df_outliers_only.get('Condutor', np.nan)
+                df_outliers_only['Unidade']    = df_outliers_only.get('unidade_alerta', np.nan)
+                df_outliers_only['Posto']      = df_outliers_only.get('posto', np.nan)
+                df_outliers_only['Produto']    = df_outliers_only.get('Produto', np.nan)
+                df_outliers_only['KM Anterior']= pd.to_numeric(df_outliers_only.get('ult_km_alerta', np.nan), errors='coerce')
+                df_outliers_only['KM Atual']   = pd.to_numeric(df_outliers_only.get('km_atual_alerta', np.nan), errors='coerce')
                 df_outliers_only['KM Rodados'] = pd.to_numeric(df_outliers_only.get('km', np.nan), errors='coerce')
-                df_outliers_only['KM Esperado'] = (media * pd.to_numeric(df_outliers_only.get('litros', np.nan), errors='coerce')).round(2)
-                df_outliers_only['KM/L'] = pd.to_numeric(df_outliers_only.get('consumo', np.nan), errors='coerce')
-                df_outliers_only['Litros'] = pd.to_numeric(df_outliers_only.get('litros', np.nan), errors='coerce')
-                df_outliers_only['Média'] = float(media)
-                df_outliers_only['Mín'] = float(consumo_min)
-                df_outliers_only['Máx'] = float(consumo_max)
-                df_outliers_only['Desvio'] = float(desvio)
-                df_outliers_only['Tipo de Anomalia'] = 'Rendimento abaixo do limiar estatistico'
-                df_outliers_only['Evidência'] = (
+                df_outliers_only['KM Esperado']= (media * pd.to_numeric(df_outliers_only.get('litros', np.nan), errors='coerce')).round(2)
+                df_outliers_only['KM/L']       = pd.to_numeric(df_outliers_only.get('consumo', np.nan), errors='coerce')
+                df_outliers_only['Litros']     = pd.to_numeric(df_outliers_only.get('litros', np.nan), errors='coerce')
+                df_outliers_only['Média']      = round(float(media), 2)
+                df_outliers_only['Mín']        = round(float(consumo_min), 2)
+                df_outliers_only['Máx']        = round(float(consumo_max), 2)
+                df_outliers_only['Desvio']     = round(float(desvio), 2)
+                df_outliers_only['R$/L']       = pd.to_numeric(df_outliers_only.get('valor_unitario', np.nan), errors='coerce').round(2)
+                df_outliers_only['Valor Total']= pd.to_numeric(df_outliers_only.get('valor_total', np.nan), errors='coerce').round(2)
+                df_outliers_only['Evidência']  = (
                     'KM/L '
                     + df_outliers_only['KM/L'].round(2).astype(str)
                     + f' abaixo de {limiar_outlier:.2f} (média - {sigma_mult:.1f}σ)'
                 )
 
                 colunas_outlier_ordem = [
-                    'Data/Hora',
-                    'Placa',
-                    'Modelo',
-                    'Motorista',
-                    'Unidade',
-                    'KM Anterior',
-                    'KM Atual',
-                    'KM Rodados',
-                    'KM Esperado',
-                    'KM/L',
-                    'Litros',
-                    'Média',
-                    'Mín',
-                    'Máx',
-                    'Desvio',
-                    'Tipo de Anomalia',
-                    'Evidência',
+                    'Data/Hora', 'Placa', 'Modelo', 'Marca', 'Unidade', 'Condutor', 'Posto', 'Produto',
+                    'KM Anterior', 'KM Atual', 'KM Rodados', 'KM Esperado',
+                    'KM/L', 'Litros', 'Média', 'Mín', 'Máx', 'Desvio',
+                    'R$/L', 'Valor Total', 'Evidência',
                 ]
+                colunas_outlier_ordem = [c for c in colunas_outlier_ordem if c in df_outliers_only.columns]
                 resultado_processado['tabela_outliers'] = df_outliers_only[colunas_outlier_ordem].copy()
             else:
                 resultado_processado['tabela_outliers'] = pd.DataFrame()
@@ -2640,6 +2792,7 @@ if aplicar_filtros:
                 'db_table_historico': 'abastecimentos_historico',
                 'db_table': 'abastecimentos_validados',
                 'outlier_sigma_mult': float(st.session_state.get('outlier_sigma_mult', 2.0)),
+                'df_historico_completo': df_raw_relatorio,
             })
             resultado_auditoria = orq.run_pipeline(filtered_df_analise, pre_validated=True)
             resultado_auditoria = filtrar_resultado_auditoria_por_recorte(filtered_df_analise, resultado_auditoria)
@@ -2693,7 +2846,7 @@ data_version = (
 )
 filtered_df, modelo_filter_list = apply_filters_cached(
     df,
-    tuple(st.session_state.filtros_ui.items()),
+    _filtros_ui_hashable(st.session_state.filtros_ui),
     tuple(fuel_map.items()),
     data_version,
 )
@@ -2746,6 +2899,22 @@ if st.session_state.resultado_processado is not None:
         # ── Painel executivo dos agentes ─────────────────────────
         renderizar_painel_executivo(resultado_auditoria, sqlite_info)
 
+        # ── Alertas de qualidade de dados (AgentValidacao) ───────
+        _rel_qualidade = resultado_auditoria.get('relatorio_qualidade', [])
+        _alertas_qualidade = [
+            f for f in _rel_qualidade
+            if f.get('tipo') not in ('VALIDACAO_CONCLUIDA',)
+            and f.get('gravidade') in ('MEDIA', 'ALTA')
+        ]
+        if _alertas_qualidade:
+            with st.expander(f"⚠️ {len(_alertas_qualidade)} problema(s) de qualidade de dados detectado(s)", expanded=True):
+                for _falha in _alertas_qualidade:
+                    _grav = _falha.get('gravidade', 'MEDIA')
+                    _icon = '🔴' if _grav == 'ALTA' else '🟡'
+                    _qtd  = _falha.get('quantidade', '')
+                    _tipo = _falha.get('tipo', '').replace('_', ' ')
+                    st.markdown(f"{_icon} **{_tipo}** — {_falha.get('detalhe', '')}")
+
         st.divider()
 
         # ── Estatística + gráfico de dispersão ───────────────────
@@ -2756,8 +2925,8 @@ if st.session_state.resultado_processado is not None:
         c4.metric("Desvio padrão", f"{desvio:.2f}")
         st.caption(f"Limiar de outlier: consumo < {limiar_outlier:.2f} km/L  (média − {sigma_mult:.1f}σ)")
 
-        # Filtra registros com consumo absurdo antes de plotar
-        _CONSUMO_MAX_VALIDO = 100.0
+        # Exclui apenas consumo impossível alto (hodômetro zerado/errado). Baixos ficam visíveis.
+        _CONSUMO_MAX_VALIDO = float(_CFG_THRESHOLDS.get('consumo_max_valido', 30.0))
         _df_plot = res['df_outliers'].copy()
         _df_plot['_consumo_num'] = pd.to_numeric(_df_plot['consumo'], errors='coerce')
         _excluidos_plot = int((_df_plot['_consumo_num'] > _CONSUMO_MAX_VALIDO).sum())
@@ -2846,54 +3015,191 @@ if st.session_state.resultado_processado is not None:
             if df_ocs_view.empty:
                 st.success("✅ Nenhuma ocorrência nessa faixa de gravidade.")
             else:
-                _ocs_rename = {
-                    'data_hora': 'Data/Hora', 'placa': 'Placa', 'modelo': 'Modelo',
-                    'condutor': 'Condutor', 'unidade': 'Unidade', 'litros': 'Litros',
-                    'km_l': 'KM/L', 'valor_observado': 'Valor Observado',
-                    'valor_referencia': 'Valor Referência', 'gravidade_final': 'Gravidade',
-                    'gravidade_inicial': 'Gravidade Inicial', 'codigo_regra': 'Regra',
-                    'tipo_ocorrencia': 'Tipo de Anomalia', 'descricao_tecnica': 'Evidência',
-                    'recomendacao': 'Recomendação',
-                }
-                _src_cols = [c for c in [
-                    'data_hora','placa','modelo','condutor','unidade',
-                    'gravidade_final','gravidade_inicial','codigo_regra','tipo_ocorrencia',
-                    'litros','km_l','valor_observado','valor_referencia','descricao_tecnica','recomendacao'
-                ] if c in df_ocs_view.columns]
-                _ocs_display = df_ocs_view[_src_cols].rename(columns=_ocs_rename).reset_index(drop=True)
-                if 'Data/Hora' in _ocs_display.columns:
-                    _ocs_display['Data/Hora'] = pd.to_datetime(_ocs_display['Data/Hora'], errors='coerce').dt.strftime('%d/%m/%Y %H:%M').fillna('-')
-                for _nc in ['Litros','KM/L','Valor Observado','Valor Referência']:
-                    if _nc in _ocs_display.columns:
-                        _ocs_display[_nc] = pd.to_numeric(_ocs_display[_nc], errors='coerce').round(2)
+                # ── Enriquecer ocorrências com KM/Marca do filtered_df ──────────
+                _fdf_km = filtered_df.copy()
+                _fdf_km['_dh_key'] = pd.to_datetime(_fdf_km['data'], errors='coerce').dt.strftime('%Y-%m-%d %H:%M')
+                _fdf_km['_placa_key'] = _fdf_km['Placa'].astype(str).str.strip()
+                _fdf_km['_km_ant'] = pd.to_numeric(_fdf_km.get('ult_km_alerta', np.nan), errors='coerce')
+                _fdf_km['_km_atu'] = pd.to_numeric(_fdf_km.get('km_atual_alerta', np.nan), errors='coerce')
+                _fdf_km['_km_rod'] = pd.to_numeric(_fdf_km.get('km', np.nan), errors='coerce')
+                _fdf_km['_marca']  = _fdf_km.get('Marca', pd.NA)
+                _fdf_km['_litros'] = pd.to_numeric(_fdf_km.get('litros', np.nan), errors='coerce')
+                _fdf_km['_vt']     = pd.to_numeric(_fdf_km.get('valor_total', np.nan), errors='coerce')
+                _fdf_km_idx = _fdf_km.set_index(['_placa_key','_dh_key'])
+
+                _STATUS_MAP = {'ALTA': '🔴 ALTA', 'CRITICA': '🔴 ALTA', 'MEDIA': '🟡 MÉDIA', 'BAIXA': '🟢 BAIXA'}
+
+                def _to_num(v, dec=2):
+                    """Converte valor para float arredondado ou '-' se inválido."""
+                    n = pd.to_numeric(v, errors='coerce')
+                    return round(float(n), dec) if not pd.isna(n) else '-'
+
+                def _first_valid(values):
+                    for value in values:
+                        if value not in ('-', '', None) and not pd.isna(value):
+                            return value
+                    return '-'
+
+                def _join_unique(values):
+                    items = []
+                    for value in values:
+                        if value in ('-', '', None) or pd.isna(value):
+                            continue
+                        text = str(value).strip()
+                        if text and text not in items:
+                            items.append(text)
+                    return ' | '.join(items) if items else '-'
+
+                _STATUS_RANK = {'🔴 ALTA': 3, '🟡 MÉDIA': 2, '🟢 BAIXA': 1}
+                _STATUS_FROM_RANK = {3: '🔴 ALTA', 2: '🟡 MÉDIA', 1: '🟢 BAIXA'}
+
+                _ocs_rows = []
+                for _r in df_ocs_view.to_dict('records'):
+                    _grav = str(_r.get('gravidade_final', _r.get('gravidade_inicial', ''))).upper()
+                    _dh   = pd.to_datetime(_r.get('data_hora',''), errors='coerce')
+                    _dh_k = _dh.strftime('%Y-%m-%d %H:%M') if not pd.isna(_dh) else ''
+                    _pl_k = str(_r.get('placa','')).strip()
+                    _km_row = _fdf_km_idx.loc[(_pl_k, _dh_k)] if (_pl_k, _dh_k) in _fdf_km_idx.index else None
+                    if isinstance(_km_row, pd.DataFrame):
+                        _km_row = _km_row.iloc[0]
+                    _ocs_rows.append({
+                        'Status':           _STATUS_MAP.get(_grav, '🟢 BAIXA'),
+                        'Data/Hora':        _dh.strftime('%d/%m/%Y %H:%M') if not pd.isna(_dh) else '-',
+                        'Placa':            _r.get('placa', '-'),
+                        'Modelo':           _r.get('modelo', '-'),
+                        'Marca':            (_km_row['_marca'] if _km_row is not None else '-') if _km_row is not None else '-',
+                        'Unidade':          _r.get('unidade', '-'),
+                        'Condutor':         _r.get('condutor', '-'),
+                        'KM Anterior':      _to_num(_km_row['_km_ant'], 0) if _km_row is not None else '-',
+                        'KM Atual':         _to_num(_km_row['_km_atu'], 0) if _km_row is not None else '-',
+                        'KM Rodados':       _to_num(_km_row['_km_rod'], 0) if _km_row is not None else _to_num(_r.get('km_rodados'), 0),
+                        'KM Esperado':      _to_num(_r.get('km_esperado')) if _to_num(_r.get('km_esperado')) != '-' else (
+                                                round(float(_to_num(_r.get('litros', 0))) * float(media), 2)
+                                                if _to_num(_r.get('litros', 0)) not in ('-', 0) else '-'
+                                            ),
+                        'KM/L':             _to_num(_r.get('km_l')),
+                        'Litros':           _to_num(_km_row['_litros']) if _km_row is not None else _to_num(_r.get('litros')),
+                        'Média':            _to_num(_r.get('media')) if _to_num(_r.get('media')) not in ('-', 0) else round(float(media), 2),
+                        'Mín':              _to_num(_r.get('min')) if _to_num(_r.get('min')) not in ('-', 0) else round(float(consumo_min), 2),
+                        'Máx':              _to_num(_r.get('max')) if _to_num(_r.get('max')) not in ('-', 0) else round(float(consumo_max), 2),
+                        'Desvio':           _to_num(_r.get('desvio')) if _to_num(_r.get('desvio')) not in ('-', 0) else round(float(desvio), 2),
+                        'Valor Total':      _to_num(_km_row['_vt']) if _km_row is not None else '-',
+                        'Regra':            _r.get('codigo_regra', '-'),
+                        'Evidência':        _r.get('descricao_tecnica', '-'),
+                        'Recomendação':     _r.get('recomendacao', '-'),
+                    })
+                _ocs_display = pd.DataFrame(_ocs_rows).reset_index(drop=True)
+                if not _ocs_display.empty:
+                    _ocs_display['_status_rank'] = _ocs_display['Status'].map(_STATUS_RANK).fillna(1)
+                    _event_keys = ['Placa', 'Data/Hora']
+                    _ocs_display = (
+                        _ocs_display
+                        .groupby(_event_keys, as_index=False, sort=False)
+                        .agg({
+                            'Status': lambda s: _STATUS_FROM_RANK.get(int(max(_STATUS_RANK.get(v, 1) for v in s)), '🟢 BAIXA'),
+                            'Modelo': _first_valid,
+                            'Marca': _first_valid,
+                            'Unidade': _first_valid,
+                            'Condutor': _first_valid,
+                            'KM Anterior': _first_valid,
+                            'KM Atual': _first_valid,
+                            'KM Rodados': _first_valid,
+                            'KM Esperado': _first_valid,
+                            'KM/L': _first_valid,
+                            'Litros': _first_valid,
+                            'Média': _first_valid,
+                            'Mín': _first_valid,
+                            'Máx': _first_valid,
+                            'Desvio': _first_valid,
+                            'Valor Total': _first_valid,
+                            'Regra': _join_unique,
+                            'Evidência': _join_unique,
+                            'Recomendação': _join_unique,
+                            '_status_rank': 'max',
+                        })
+                    )
+                    _ocs_display = _ocs_display[[
+                        'Status', 'Data/Hora', 'Placa', 'Modelo', 'Marca', 'Unidade', 'Condutor',
+                        'KM Anterior', 'KM Atual', 'KM Rodados', 'KM Esperado', 'KM/L', 'Litros',
+                        'Média', 'Mín', 'Máx', 'Desvio', 'Valor Total', 'Regra', 'Evidência', 'Recomendação'
+                    ]]
                 render_dataframe_limited(_ocs_display)
 
                 # Notificações — uma por acordeon
                 if notificacoes_agente:
                     st.markdown(f"**📬 Minutas administrativas — {len(notificacoes_agente)} notificação(ões)**")
+
+                    # ── Configuração SMTP global (sem destinatário — fica em cada notif) ──
+                    with st.expander("⚙️ Configurar servidor de e-mail (SMTP)", expanded=False):
+                        _ec = st.session_state.get('email_config', {})
+                        _col1, _col2 = st.columns([3, 1])
+                        _smtp_host = _col1.text_input("Servidor SMTP", value=_ec.get('host', 'smtp.gmail.com'), key="smtp_host")
+                        _smtp_port = _col2.number_input("Porta", value=int(_ec.get('port', 465)), min_value=1, max_value=65535, key="smtp_port")
+                        _smtp_rem  = st.text_input("E-mail remetente (seu e-mail)", value=_ec.get('remetente', ''), key="smtp_rem")
+                        _smtp_pass = st.text_input("Senha / App Password", value='', type="password", key="smtp_pass",
+                                                   help="Use uma App Password se tiver 2FA ativo no Gmail/Outlook.")
+                        _smtp_ssl  = st.checkbox("Usar SSL (porta 465)", value=_ec.get('usar_ssl', True), key="smtp_ssl")
+                        if st.button("💾 Salvar configuração SMTP", key="smtp_salvar"):
+                            st.session_state['email_config'] = {
+                                'host':     _smtp_host,
+                                'port':     _smtp_port,
+                                'remetente': _smtp_rem,
+                                'senha':    _smtp_pass,
+                                'usar_ssl': _smtp_ssl,
+                            }
+                            st.success("Configuração salva para esta sessão.")
+
                     for i, notif in enumerate(notificacoes_agente, 1):
                         label = f"{i}. Placa {notif.get('placa','?')} · {notif.get('condutor','?')} — {notif.get('gravidade_max','?')}"
                         with st.expander(label, expanded=False):
                             st.text_area("", value=notif.get('texto_notificacao', notif.get('minuta', '')), height=260, key=f"notif_{i}", label_visibility="collapsed")
-                            try:
-                                _word_bytes = build_notificacao_docx(
-                                    [notif],
-                                    metadata={
-                                        'municipio': st.session_state.get('municipio', ''),
-                                        'responsavel': st.session_state.get('responsavel', 'Departamento de Transportes'),
-                                    }
-                                )
-                                _placa_slug = str(notif.get('placa', 'notificacao')).replace(' ', '_')
-                                st.download_button(
-                                    "📄 Baixar Notificação (Word)",
-                                    data=_word_bytes,
-                                    file_name=f"notificacao_{_placa_slug}_{i}.docx",
-                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                    key=f"dl_notif_word_{i}",
-                                    use_container_width=True,
-                                )
-                            except Exception as _e:
-                                st.warning(f"⚠️ Erro ao gerar Word: {_e}")
+
+                            # Destinatário individual por notificação
+                            _dest_key = f"notif_dest_{i}"
+                            _dest_default = st.session_state.get(_dest_key, '')
+                            _dest_email = st.text_input(
+                                "📧 E-mail do destinatário",
+                                value=_dest_default,
+                                key=_dest_key,
+                                placeholder=f"email do {notif.get('condutor', 'motorista')}...",
+                            )
+
+                            _btn_col1, _btn_col2 = st.columns(2)
+                            with _btn_col1:
+                                try:
+                                    _word_bytes = build_notificacao_docx(
+                                        [notif],
+                                        metadata={
+                                            'municipio': st.session_state.get('municipio', ''),
+                                            'responsavel': st.session_state.get('responsavel', 'Departamento de Transportes'),
+                                        }
+                                    )
+                                    _placa_slug = str(notif.get('placa', 'notificacao')).replace(' ', '_')
+                                    st.download_button(
+                                        "📄 Baixar Notificação (Word)",
+                                        data=_word_bytes,
+                                        file_name=f"notificacao_{_placa_slug}_{i}.docx",
+                                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                        key=f"dl_notif_word_{i}",
+                                        use_container_width=True,
+                                    )
+                                except Exception as _e:
+                                    st.warning(f"⚠️ Erro ao gerar Word: {_e}")
+                            with _btn_col2:
+                                if st.button("📧 Enviar por E-mail", key=f"btn_email_{i}", use_container_width=True):
+                                    _cfg = st.session_state.get('email_config', {})
+                                    if not _dest_email.strip():
+                                        st.warning("Informe o e-mail do destinatário acima.")
+                                    elif not all(_cfg.get(k) for k in ('host', 'remetente', 'senha')):
+                                        st.warning("Configure o servidor SMTP antes de enviar (⚙️ acima).")
+                                    else:
+                                        _cfg_envio = {**_cfg, 'destinatario': _dest_email.strip()}
+                                        with st.spinner("Enviando..."):
+                                            _ok, _err = enviar_notificacao_email(notif, _cfg_envio)
+                                        if _ok:
+                                            st.success(f"✅ E-mail enviado para {_dest_email.strip()}")
+                                        else:
+                                            st.error(f"❌ Falha ao enviar: {_err}")
         else:
             st.success("✅ Nenhuma ocorrência identificada com os dados filtrados.")
 
@@ -3065,7 +3371,8 @@ if st.session_state.resultado_processado is not None:
                 hover_data={'Placa': True, 'Condutor': True, 'posto': True,
                             'km': True, 'litros': True, 'consumo_num': True,
                             'litros_size': False, '_cor': False, 'outlier': False},
-                title=f"Placa {placa_sel} — consumo ao longo do tempo",
+                title=f"Placa {placa_sel} — consumo ao longo do tempo<br><sup>Tamanho do círculo = litros abastecidos</sup>",
+                labels={'consumo_num': 'KM/L', 'litros_size': 'Litros abastecidos'},
                 template='plotly_dark',
             )
             fig_tl.update_layout(
@@ -3119,7 +3426,20 @@ if st.session_state.resultado_processado is not None:
                     tabela_base['Produto'] = pd.NA
             tabela_base['Produto'] = tabela_base['Produto'].replace(['None','none','nan','NaN',''], pd.NA).fillna('-').astype(str).str.strip()
 
-            colunas_base = ['data','Placa','Modelo','unidade_alerta','Condutor','Marca','posto','Produto','ult_km_alerta','km_atual_alerta','km','litros','consumo']
+            # ── Coluna de Status: join ocorrências → gravidade máxima por registro ──
+            _ocs_all = resultado_auditoria.get('ocorrencias', [])
+            _GRAV_RANK = {'ALTA': 3, 'CRITICA': 3, 'MEDIA': 2, 'BAIXA': 1}
+            _STATUS_DOT = {3: '🔴 ALTA', 2: '🟡 MÉDIA', 1: '🟢 OK'}
+            _oc_lookup: dict = {}
+            for _oc in _ocs_all:
+                _dh_oc = pd.to_datetime(_oc.get('data_hora', ''), errors='coerce')
+                _key = (str(_oc.get('placa','')).strip(),
+                        _dh_oc.strftime('%Y-%m-%d %H:%M') if not pd.isna(_dh_oc) else '')
+                _rank = _GRAV_RANK.get(str(_oc.get('gravidade_final', '')).upper(), 0)
+                _oc_lookup[_key] = max(_oc_lookup.get(_key, 0), _rank)
+
+            colunas_base = ['data','Placa','Modelo','Marca','unidade_alerta','Condutor','posto','Produto',
+                            'ult_km_alerta','km_atual_alerta','km','litros','consumo','valor_unitario','valor_total']
             for c in colunas_base:
                 if c not in tabela_base.columns:
                     tabela_base[c] = pd.NA
@@ -3128,12 +3448,29 @@ if st.session_state.resultado_processado is not None:
                 'data':'Data/Hora','unidade_alerta':'Unidade','posto':'Posto',
                 'ult_km_alerta':'KM Anterior','km_atual_alerta':'KM Atual',
                 'km':'KM Rodados','litros':'Litros','consumo':'KM/L',
+                'valor_unitario':'R$/L','valor_total':'Valor Total',
             })
-            for col in ['KM Anterior','KM Atual','KM Rodados','Litros','KM/L']:
+            # Adiciona KM Esperado e estatísticas globais do recorte
+            _litros_num = pd.to_numeric(tabela_exibicao.get('Litros', pd.Series(dtype=float)), errors='coerce')
+            tabela_exibicao['KM Esperado'] = (_litros_num * float(media)).round(2)
+            tabela_exibicao['Média']  = round(float(media), 2)
+            tabela_exibicao['Mín']    = round(float(consumo_min), 2)
+            tabela_exibicao['Máx']    = round(float(consumo_max), 2)
+            tabela_exibicao['Desvio'] = round(float(desvio), 2)
+            for col in ['KM Anterior','KM Atual','KM Rodados','Litros','KM/L','R$/L','Valor Total']:
                 if col in tabela_exibicao.columns:
                     tabela_exibicao[col] = pd.to_numeric(tabela_exibicao[col], errors='coerce').round(2)
             if 'Data/Hora' in tabela_exibicao.columns:
-                tabela_exibicao['Data/Hora'] = pd.to_datetime(tabela_exibicao['Data/Hora'], errors='coerce').dt.strftime('%d/%m/%Y %H:%M')
+                _dh_series = pd.to_datetime(tabela_exibicao['Data/Hora'], errors='coerce')
+                _dh_key_series = _dh_series.dt.strftime('%Y-%m-%d %H:%M').fillna('')
+                tabela_exibicao['Data/Hora'] = _dh_series.dt.strftime('%d/%m/%Y %H:%M').fillna('-')
+            else:
+                _dh_key_series = pd.Series([''] * len(tabela_exibicao), index=tabela_exibicao.index)
+            _placa_series = tabela_exibicao['Placa'].astype(str).str.strip() if 'Placa' in tabela_exibicao.columns else pd.Series([''] * len(tabela_exibicao), index=tabela_exibicao.index)
+            tabela_exibicao.insert(0, 'Status', [
+                _STATUS_DOT.get(_oc_lookup.get((_pl, _dh), 0), '🟢 OK')
+                for _pl, _dh in zip(_placa_series, _dh_key_series)
+            ])
             tabela_exibicao = tabela_exibicao.where(pd.notna(tabela_exibicao), '-').replace({'None':'-','nan':'-','NaT':'-'})
 
             st.caption(f"{len(tabela_exibicao):,} registros no recorte atual".replace(',', '.'))
