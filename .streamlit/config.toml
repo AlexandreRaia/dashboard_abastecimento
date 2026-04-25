@@ -1,7 +1,22 @@
 [theme]
-base="dark"
-primaryColor="#38bdf8"
-backgroundColor="#0a121b"
-secondaryBackgroundColor="#111d2b"
-textColor="#e7eef8"
-font="sans serif"
+# Configure dark theme colors
+primaryColor = "#00d4aa"
+backgroundColor = "#0a121b"
+secondaryBackgroundColor = "#162436"
+textColor = "#e7eef8"
+font = "sans serif"
+
+[client]
+# Disable client.showErrorDetails to reduce console noise
+showErrorDetails = false
+
+[logger]
+level = "error"
+
+[ui]
+# Reduce scroll friction
+hideTopBar = false
+
+[browser]
+# Enable sharing
+gatherUsageStats = false

@@ -1,4 +1,3 @@
-import json
 import sqlite3
 import datetime
 import streamlit as st
@@ -12,7 +11,6 @@ from make_bar_consumo_secretaria import make_bar_consumo_secretaria
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "relatorio.db"
-CONFIG_PATH = BASE_DIR / "config.json"
 DEFAULT_DISCOUNT_RATE = 0.0405
 
 MONTHS = {
@@ -62,13 +60,37 @@ def make_bar_gasto_por_mes_unificado(
 			return 'Março/' + partes[1]
 		return periodo
 
-	# Calcular meta mensal
-	_limits_df = get_limits_df()
-	if selected_secretaria and selected_secretaria != "Todas":
-		_row = _limits_df[_limits_df["secretaria"].str.upper() == selected_secretaria.upper()]
-		meta_mensal = float(_row["empenho_2026"].iloc[0]) / 12 if not _row.empty else 0.0
+	# Calcular meta mensal considerando os anos presentes no filtro
+	if "data_hora" in df_filtered.columns and not df_filtered.empty:
+		_data_inicio = pd.to_datetime(df_filtered["data_hora"]).min().date()
+		_data_fim = pd.to_datetime(df_filtered["data_hora"]).max().date()
+		_limits_df = get_limits_df_for_period(_data_inicio, _data_fim)
 	else:
-		meta_mensal = float(_limits_df["empenho_2026"].sum()) / 12
+		_limits_df = get_limits_df()
+
+	if selected_secretaria and selected_secretaria != "Todas":
+		_limits_df = _limits_df[_limits_df["secretaria"].str.upper() == selected_secretaria.upper()].copy()
+
+	if _limits_df.empty:
+		meta_mensal = 0.0
+	elif "ano" in _limits_df.columns and "data_hora" in df_filtered.columns and not df_filtered.empty:
+		# Meta mensal global: soma dos limites mensais por secretaria, ponderada por meses de cada ano.
+		_df_aux = df_filtered.copy()
+		_df_aux["ano"] = pd.to_datetime(_df_aux["data_hora"]).dt.year
+		_df_aux["ano_mes"] = pd.to_datetime(_df_aux["data_hora"]).dt.to_period("M")
+		months_by_year = _df_aux.groupby("ano")["ano_mes"].nunique().to_dict()
+
+		limits_by_year = _limits_df.groupby("ano", as_index=False)["limite_mensal"].sum()
+		weighted_sum = 0.0
+		total_months = 0
+		for _, _row in limits_by_year.iterrows():
+			_ano = int(_row["ano"])
+			_meses = int(months_by_year.get(_ano, 0))
+			weighted_sum += float(_row.get("limite_mensal", 0.0)) * _meses
+			total_months += _meses
+		meta_mensal = weighted_sum / total_months if total_months > 0 else float(limits_by_year["limite_mensal"].sum())
+	else:
+		meta_mensal = float(_limits_df["limite_mensal"].sum()) if "limite_mensal" in _limits_df.columns else 0.0
 
 	# Corrigir todos os labels e agregar valores por mês/ano único
 	monthly_totals["periodo_corrigido"] = monthly_totals["periodo"].apply(corrige_mes_nome)
@@ -175,7 +197,7 @@ def make_bar_gasto_por_mes_unificado(
 				y=[None],
 				mode="lines",
 				line=dict(color="#ef4444", width=3, dash="dash"),
-				name="Limite mensal"
+				name=f"Limite mensal ({currency(limite_mensal)})"
 			)
 		)
 
@@ -215,7 +237,7 @@ def make_bar_gasto_por_mes_unificado(
 	return apply_plotly_theme(fig)
 
 
-def make_bar_gasto_por_ano(df: pd.DataFrame, selected_secretaria: str = "Todas", selected_combustivel: str = "Todos") -> go.Figure:
+def make_bar_gasto_por_ano(df: pd.DataFrame, selected_secretaria: str = "Todas", selected_combustivel: str = "Todos", discount_rate: float = 0.0) -> go.Figure:
     if df.empty or not {'ano', 'valor'}.issubset(df.columns):
         fig = go.Figure()
         fig.update_layout(template="plotly_dark", title="Sem dados para gasto anual")
@@ -223,15 +245,40 @@ def make_bar_gasto_por_ano(df: pd.DataFrame, selected_secretaria: str = "Todas",
 
     grupo = df.groupby("ano", as_index=False).agg(valor_total=("valor", "sum"))
     grupo = grupo.sort_values("ano")
+    
+    # Calcular valor bruto (antes do desconto) dividindo pelo fator de desconto
+    grupo["valor_bruto"] = grupo["valor_total"] / (1 - discount_rate) if discount_rate > 0 else grupo["valor_total"]
+    grupo["valor_desconto"] = grupo["valor_bruto"] - grupo["valor_total"]
+    
+    # Paleta fixa por ano dentro do espectro azul (mais claro = mais antigo, mais escuro = atual)
+    PALETA_ANOS = {
+        2022: "#bfdbfe",  # azul muito claro
+        2023: "#7dd3fc",  # azul claro
+        2024: "#38bdf8",  # azul médio-claro (sky)
+        2025: "#3b82f6",  # azul médio
+        2026: "#1d4ed8",  # azul escuro (atual)
+    }
+    ano_atual = int(grupo["ano"].max())
+    
     fig = go.Figure(go.Bar(
         x=grupo["ano"].astype(str),
         y=grupo["valor_total"],
-        marker_color=["#2563eb" if int(a)==2026 else "#38bdf8" for a in grupo["ano"]],
+        marker_color=[PALETA_ANOS.get(int(a), "#60a5fa") for a in grupo["ano"]],
         text=[currency(v) for v in grupo["valor_total"]],
         textposition="outside",
         textfont={"size": 16, "color": "#fff", "family": "'Space Grotesk', sans-serif"},
-        name="Gasto anual"
+        name="Gasto anual",
+        customdata=grupo[["valor_bruto", "valor_desconto"]],
+        hovertemplate=(
+            "<b>Ano %{x}</b><br>"
+            "Valor bruto: <b>R$ %{customdata[0]:,.2f}</b><br>"
+            f"Desconto (-{discount_rate*100:.1f}%): <b>-R$ %{{customdata[1]:,.2f}}</b><br>"
+            "Valor pago: <b>R$ %{y:,.2f}</b><extra></extra>"
+        ),
     ))
+    
+    # Adicionar subtítulo informando sobre o desconto
+    
     fig.update_layout(
         template="plotly_dark",
         title="Gasto anual comparativo",
@@ -346,12 +393,21 @@ def inject_style() -> None:
 		"""
 		<script>
 		(function() {
+			// Set language attributes
 			var r = window.parent.document.documentElement;
 			r.setAttribute('translate', 'no');
 			r.setAttribute('lang', 'pt-BR');
 			var m = window.parent.document.createElement('meta');
 			m.name = 'google'; m.content = 'notranslate';
 			window.parent.document.head.appendChild(m);
+
+			// Force dark background immediately to prevent white flash
+			document.documentElement.style.backgroundColor = '#0a121b';
+			document.body.style.backgroundColor = '#0a121b';
+			if (window.parent.document) {
+				window.parent.document.documentElement.style.backgroundColor = '#0a121b';
+				window.parent.document.body.style.backgroundColor = '#0a121b';
+			}
 		})();
 		</script>
 		""",
@@ -361,6 +417,21 @@ def inject_style() -> None:
 		"""
 		<style>
 		@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&family=Space+Grotesk:wght@400;500;700&display=swap');
+
+		/* ── Elimina flash branco durante transições ── */
+		html, body {
+			background-color: #0a121b !important;
+			background-image: radial-gradient(circle at 20% -10%, rgba(56,189,248,0.20), transparent 35%), radial-gradient(circle at 90% 0%, rgba(45,212,191,0.16), transparent 30%) !important;
+		}
+
+		iframe {
+			background-color: #0a121b !important;
+		}
+
+		/* ── Transições suaves ── */
+		* {
+			transition: background-color 0.15s ease, color 0.15s ease !important;
+		}
 
 		#MainMenu,
 		footer {
@@ -410,6 +481,8 @@ def inject_style() -> None:
 				#0a121b;
 			color: #e7eef8;
 			font-family: 'Space Grotesk', sans-serif;
+			min-height: 100vh;
+			background-attachment: fixed;
 		}
 
 		section[data-testid="stSidebar"] {
@@ -587,16 +660,41 @@ def inject_style() -> None:
 			padding-top: 8px;
 			border-top: 1px solid rgba(142,163,190,0.15);
 		}
+
+		.kpi-delta {
+			font-size: 0.75rem;
+			font-weight: 600;
+			margin-top: 4px;
+			border-radius: 5px;
+			padding: 1px 8px;
+			display: inline-block;
+			white-space: nowrap;
+			letter-spacing: 0.03em;
+		}
 		</style>
 		""",
 		unsafe_allow_html=True,
 	)
 
 
-def render_kpi_cards(kpis: dict[str, float | str]) -> None:
+def render_kpi_cards(kpis: dict[str, float | str], deltas: dict | None = None) -> None:
 		def _fmt_num(v, dec=0):
 			fmt = f"{v:,.{dec}f}".replace(",", "X").replace(".", ",").replace("X", ".")
 			return fmt
+
+		def _delta_badge(key, inverted=False):
+			"""Retorna HTML do badge YoY ou string vazia se não disponível."""
+			if not deltas or key not in deltas:
+				return ""
+			pct, ano_ref = deltas[key]
+			if pct is None:
+				return ""
+			is_up = pct > 0
+			is_bad = is_up if inverted else not is_up
+			color = "#f87171" if is_bad else "#4ade80"
+			bg = "rgba(239,68,68,0.15)" if is_bad else "rgba(34,197,94,0.15)"
+			arrow = "▲" if is_up else "▼"
+			return f'<div class="kpi-delta" style="color:{color};background:{bg};">{arrow} {abs(pct):.1f}% vs {ano_ref}</div>'
 
 		html = f"""
 		<div class="kpi-grid">
@@ -607,6 +705,7 @@ def render_kpi_cards(kpis: dict[str, float | str]) -> None:
 			<div class="kpi-card">
 				<div class="kpi-label">Gasto Total Faturado</div>
 				<div class="kpi-value">{currency(kpis['gasto_total'])}</div>
+				{_delta_badge('gasto_total', inverted=True)}
 			</div>
 			<div class="kpi-card">
 				<div class="kpi-label">{kpis['label_saldo_empenho']}</div>
@@ -625,6 +724,7 @@ def render_kpi_cards(kpis: dict[str, float | str]) -> None:
 			<div class="kpi-card">
 				<div class="kpi-label">Total de Litros</div>
 				<div class="kpi-value">{_fmt_num(kpis['gasto_litros'], 2)} L</div>
+				{_delta_badge('gasto_litros', inverted=True)}
 			</div>
 			<div class="kpi-card">
 				<div class="kpi-label">Consumo Médio</div>
@@ -637,6 +737,7 @@ def render_kpi_cards(kpis: dict[str, float | str]) -> None:
 			<div class="kpi-card">
 				<div class="kpi-label">Nº Abastecimentos</div>
 				<div class="kpi-value">{_fmt_num(kpis['n_abastecimentos'])}</div>
+				{_delta_badge('n_abastecimentos', inverted=False)}
 			</div>
 			<div class="kpi-card">
 				<div class="kpi-label">Veículos Ativos</div>
@@ -652,17 +753,308 @@ def currency(value: float) -> str:
 
 
 @st.cache_data(show_spinner=False)
+def get_financial_params_by_years(anos: list[int], secretaria: str | None = None) -> pd.DataFrame:
+	"""
+	Lê parâmetros financeiros (empenho, limites, desconto) do banco para anos e opcionalmente secretaria específicas.
+	Se secretaria for None, traz todas.
+	Se não houver cadastro para um ano/secretaria, deixa zerado (não filtra out).
+	"""
+	with sqlite3.connect(DB_PATH) as conn:
+		query = """
+			SELECT 
+				secretaria,
+				ano,
+				valor_empenhado,
+				limite_litros_gasolina,
+				limite_litros_alcool,
+				limite_litros_diesel,
+				desconto_percentual
+			FROM parametros_financeiros_anuais
+			WHERE ano IN ({})
+		""".format(','.join('?' * len(anos)))
+		
+		params = anos
+		if secretaria:
+			query += " AND secretaria = ?"
+			params = anos + [secretaria]
+		
+		query += " ORDER BY secretaria, ano"
+		df = pd.read_sql_query(query, conn, params=params)
+	
+	# Garantir que não haja NaN nos valores numéricos
+	for col in ['valor_empenhado', 'limite_litros_gasolina', 'limite_litros_alcool', 'limite_litros_diesel', 'desconto_percentual']:
+		if col in df.columns:
+			df[col] = df[col].fillna(0.0)
+	
+	# Derivar colunas necessárias
+	df['limite_mensal'] = df['valor_empenhado'] / 12.0
+	df['limite_litros_mensal'] = df['limite_litros_gasolina'] + df['limite_litros_alcool'] + df['limite_litros_diesel']
+	
+	return df
+
+
+@st.cache_data(show_spinner=False)
 def get_limits_df() -> pd.DataFrame:
-	df = load_config(CONFIG_PATH)[0]
-	# Remove campo legado se existir
-	if "limite_quinzenal" in df.columns:
-		df = df.drop(columns=["limite_quinzenal"])
+	"""
+	Retorna parâmetros financeiros para o ano corrente (compatibilidade com código legado).
+	De preferência, usar get_financial_params_by_years() em novo código.
+	"""
+	current_year = datetime.date.today().year
+	df = get_financial_params_by_years([current_year])
 	return df
 
 
 @st.cache_data(show_spinner=False)
 def get_discount_rate() -> float:
-	return load_config(CONFIG_PATH)[1]
+	"""
+	Retorna taxa de desconto para o ano corrente (compatibilidade com código legado).
+	De preferência, extrair do dataframe de parâmetros em novo código.
+	"""
+	current_year = datetime.date.today().year
+	df = get_financial_params_by_years([current_year])
+	if df.empty:
+		return DEFAULT_DISCOUNT_RATE
+	# Pega o primeiro valor de desconto disponível (normalmente todos iguais no mesmo ano)
+	return float(df['desconto_percentual'].iloc[0])
+
+
+@st.cache_data(show_spinner=False)
+def get_financial_params_editor_df() -> pd.DataFrame:
+	"""Carrega todos os parâmetros financeiros anuais para edição na sidebar."""
+	with sqlite3.connect(DB_PATH) as conn:
+		df = pd.read_sql_query(
+			"""
+			SELECT
+				secretaria,
+				ano,
+				valor_empenhado,
+				limite_litros_gasolina,
+				limite_litros_alcool,
+				limite_litros_diesel,
+				desconto_percentual
+			FROM parametros_financeiros_anuais
+			ORDER BY secretaria, ano
+			""",
+			conn,
+		)
+
+	if df.empty:
+		return pd.DataFrame(
+			columns=[
+				"secretaria",
+				"ano",
+				"valor_empenhado",
+				"limite_litros_gasolina",
+				"limite_litros_alcool",
+				"limite_litros_diesel",
+				"desconto_percentual",
+			]
+		)
+
+	for col in [
+		"valor_empenhado",
+		"limite_litros_gasolina",
+		"limite_litros_alcool",
+		"limite_litros_diesel",
+		"desconto_percentual",
+	]:
+		df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+	df["ano"] = pd.to_numeric(df["ano"], errors="coerce").fillna(0).astype(int)
+	df["secretaria"] = df["secretaria"].astype(str).str.strip().str.upper()
+	return df
+
+
+def save_financial_params_editor_df(df_editor: pd.DataFrame) -> tuple[int, int]:
+	"""Persiste alterações do editor aplicando insert/update/delete por (secretaria, ano)."""
+	cols = [
+		"secretaria",
+		"ano",
+		"valor_empenhado",
+		"limite_litros_gasolina",
+		"limite_litros_alcool",
+		"limite_litros_diesel",
+		"desconto_pct",
+	]
+	missing = [c for c in cols if c not in df_editor.columns]
+	if missing:
+		raise ValueError(f"Colunas obrigatórias ausentes: {', '.join(missing)}")
+
+	df = df_editor[cols].copy()
+	df["secretaria"] = df["secretaria"].astype(str).str.strip().str.upper()
+	df["ano"] = pd.to_numeric(df["ano"], errors="coerce")
+
+	for col in [
+		"valor_empenhado",
+		"limite_litros_gasolina",
+		"limite_litros_alcool",
+		"limite_litros_diesel",
+		"desconto_pct",
+	]:
+		df[col] = pd.to_numeric(df[col], errors="coerce")
+
+	# Remove linhas completamente vazias criadas dinamicamente no editor.
+	empty_row = (
+		(df["secretaria"] == "")
+		& df["ano"].isna()
+		& df[["valor_empenhado", "limite_litros_gasolina", "limite_litros_alcool", "limite_litros_diesel", "desconto_pct"]].isna().all(axis=1)
+	)
+	df = df[~empty_row].copy()
+
+	if df["secretaria"].eq("").any():
+		raise ValueError("A coluna secretaria não pode ficar vazia.")
+	if df["ano"].isna().any():
+		raise ValueError("A coluna ano deve ser preenchida para todas as linhas.")
+
+	df["ano"] = df["ano"].astype(int)
+	if ((df["ano"] < 2000) | (df["ano"] > 2100)).any():
+		raise ValueError("Ano inválido. Use valores entre 2000 e 2100.")
+
+	for col in ["valor_empenhado", "limite_litros_gasolina", "limite_litros_alcool", "limite_litros_diesel", "desconto_pct"]:
+		df[col] = df[col].fillna(0.0)
+		if (df[col] < 0).any():
+			raise ValueError(f"Valores negativos não são permitidos em {col}.")
+
+	if (df["desconto_pct"] > 100).any():
+		raise ValueError("Desconto (%) deve ficar entre 0 e 100.")
+
+	dupes = df.duplicated(subset=["secretaria", "ano"], keep=False)
+	if dupes.any():
+		keys = [f"{row.secretaria}/{row.ano}" for row in df.loc[dupes, ["secretaria", "ano"]].itertuples(index=False)]
+		raise ValueError("Existem chaves duplicadas (secretaria/ano): " + ", ".join(sorted(set(keys))))
+
+	df["desconto_percentual"] = (df["desconto_pct"] / 100.0).astype(float)
+
+	with sqlite3.connect(DB_PATH) as conn:
+		current_keys = set(conn.execute("SELECT secretaria, ano FROM parametros_financeiros_anuais").fetchall())
+		new_keys = {(row.secretaria, int(row.ano)) for row in df[["secretaria", "ano"]].itertuples(index=False)}
+		to_delete = current_keys - new_keys
+
+		for row in df.itertuples(index=False):
+			conn.execute(
+				"""
+				INSERT INTO parametros_financeiros_anuais (
+					secretaria,
+					ano,
+					valor_empenhado,
+					limite_litros_gasolina,
+					limite_litros_alcool,
+					limite_litros_diesel,
+					desconto_percentual,
+					updated_at
+				)
+				VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+				ON CONFLICT(secretaria, ano) DO UPDATE SET
+					valor_empenhado = excluded.valor_empenhado,
+					limite_litros_gasolina = excluded.limite_litros_gasolina,
+					limite_litros_alcool = excluded.limite_litros_alcool,
+					limite_litros_diesel = excluded.limite_litros_diesel,
+					desconto_percentual = excluded.desconto_percentual,
+					updated_at = CURRENT_TIMESTAMP
+				""",
+				(
+					row.secretaria,
+					int(row.ano),
+					float(row.valor_empenhado),
+					float(row.limite_litros_gasolina),
+					float(row.limite_litros_alcool),
+					float(row.limite_litros_diesel),
+					float(row.desconto_percentual),
+				),
+			)
+
+		if to_delete:
+			conn.executemany(
+				"DELETE FROM parametros_financeiros_anuais WHERE secretaria = ? AND ano = ?",
+				list(to_delete),
+			)
+
+		conn.commit()
+
+	return len(df), len(to_delete)
+
+
+@st.dialog("Parâmetros Financeiros Anuais", width="large")
+def render_financial_params_editor_modal() -> None:
+	"""Modal com pesquisa por ano e edição dos parâmetros financeiros anuais."""
+	df_params = get_financial_params_editor_df().copy()
+	df_params["desconto_pct"] = pd.to_numeric(df_params.get("desconto_percentual", 0.0), errors="coerce").fillna(0.0) * 100.0
+	df_params = df_params[
+		[
+			"secretaria",
+			"ano",
+			"valor_empenhado",
+			"limite_litros_gasolina",
+			"limite_litros_alcool",
+			"limite_litros_diesel",
+			"desconto_pct",
+		]
+	]
+
+	years = sorted(int(v) for v in df_params["ano"].dropna().unique().tolist()) if not df_params.empty else []
+	ano_options = ["Todos"] + years
+	selected_ano = st.selectbox("Pesquisar por ano", options=ano_options, index=0, key="editor_parametros_ano_busca")
+
+	if selected_ano == "Todos":
+		editor_df = df_params.copy()
+	else:
+		editor_df = df_params[df_params["ano"] == int(selected_ano)].copy()
+
+	st.caption("Edite os valores, inclua novas linhas ou apague linhas. Clique em Salvar para aplicar.")
+	edited = st.data_editor(
+		editor_df,
+		use_container_width=True,
+		height=480,
+		hide_index=True,
+		num_rows="dynamic",
+		key=f"editor_parametros_financeiros_{selected_ano}",
+		column_config={
+			"secretaria": st.column_config.TextColumn("Secretaria", required=True),
+			"ano": st.column_config.NumberColumn("Ano", min_value=2000, max_value=2100, step=1),
+			"valor_empenhado": st.column_config.NumberColumn("Valor empenhado (R$)", min_value=0.0, format="%.2f"),
+			"limite_litros_gasolina": st.column_config.NumberColumn("Limite gasolina (L)", min_value=0.0, format="%.2f"),
+			"limite_litros_alcool": st.column_config.NumberColumn("Limite álcool (L)", min_value=0.0, format="%.2f"),
+			"limite_litros_diesel": st.column_config.NumberColumn("Limite diesel (L)", min_value=0.0, format="%.2f"),
+			"desconto_pct": st.column_config.NumberColumn("Desconto (%)", min_value=0.0, max_value=100.0, format="%.2f"),
+		},
+	)
+
+	btn_save, btn_close = st.columns(2)
+	if btn_save.button("💾 Salvar", use_container_width=True, type="primary", key="btn_save_params_modal"):
+		try:
+			if selected_ano == "Todos":
+				df_to_save = edited.copy()
+			else:
+				df_other_years = df_params[df_params["ano"] != int(selected_ano)].copy()
+				df_to_save = pd.concat([df_other_years, edited], ignore_index=True)
+
+			n_rows, n_deleted = save_financial_params_editor_df(df_to_save)
+		except Exception as exc:
+			st.error(f"Não foi possível salvar: {exc}")
+		else:
+			get_financial_params_editor_df.clear()
+			get_financial_params_by_years.clear()
+			get_limits_df.clear()
+			get_discount_rate.clear()
+			st.session_state["show_fin_params_modal"] = False
+			st.toast(f"Parâmetros salvos. Linhas ativas: {n_rows}. Removidas: {n_deleted}.")
+			st.rerun()
+
+	if btn_close.button("Fechar", use_container_width=True, key="btn_close_params_modal"):
+		st.session_state["show_fin_params_modal"] = False
+		st.rerun()
+
+
+def render_financial_params_editor_sidebar() -> None:
+	"""Botão no menu lateral que abre modal de edição de parâmetros financeiros."""
+	if "show_fin_params_modal" not in st.session_state:
+		st.session_state["show_fin_params_modal"] = False
+
+	if st.button("⚙️ Editar parâmetros financeiros", use_container_width=True, key="btn_open_fin_params_modal"):
+		st.session_state["show_fin_params_modal"] = True
+		st.rerun()
+
+	if st.session_state.get("show_fin_params_modal", False):
+		render_financial_params_editor_modal()
 
 
 @st.cache_data(show_spinner=False)
@@ -674,7 +1066,12 @@ def get_real_df(db_version: int = 0) -> pd.DataFrame:
 
 
 def normalize_secretaria(value: str) -> str:
-    return str(value or "").strip().upper()
+	normalized = str(value or "").strip().upper()
+	secretaria_aliases = {
+		"SEMUTTRANS": "SMTT",
+		"SEMUTRANS": "SMTT",
+	}
+	return secretaria_aliases.get(normalized, normalized)
 
 
 def normalize_fuel(value: str) -> str:
@@ -684,33 +1081,6 @@ def normalize_fuel(value: str) -> str:
 
 def clamp_discount_rate(value: float) -> float:
     return min(max(float(value), 0.0), 1.0)
-
-
-def load_config(path: Path) -> tuple[pd.DataFrame, float]:
-    with path.open("r", encoding="utf-8") as file:
-        payload = json.load(file)
-
-    discount_rate = clamp_discount_rate(payload.get("desconto_percentual", DEFAULT_DISCOUNT_RATE))
-
-    rows = []
-    for item in payload.get("secretarias", []):
-        litros = item.get("limites_litros", {})
-        row = {
-            "secretaria": normalize_secretaria(item.get("sigla")),
-            "empenho_2026": float(item.get("empenho_2026", 0.0)),
-            "limite_mensal": float(item.get("limite_mensal", 0.0)),
-            "limite_litros_gasolina": float(litros.get("gasolina", 0.0)),
-            "limite_litros_alcool": float(litros.get("alcool", 0.0)),
-            "limite_litros_diesel": float(litros.get("diesel", 0.0)),
-        }
-        row["limite_litros_mensal"] = (
-            row["limite_litros_gasolina"]
-            + row["limite_litros_alcool"]
-            + row["limite_litros_diesel"]
-        )
-        rows.append(row)
-
-    return pd.DataFrame(rows), discount_rate
 
 
 def resolve_source_table(conn: sqlite3.Connection) -> str:
@@ -823,39 +1193,95 @@ def build_monthly_mix(df_filtered: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataF
 
 
 def build_secretaria_status(df_filtered: pd.DataFrame, df_limits: pd.DataFrame) -> pd.DataFrame:
-    months = month_count(df_filtered)
+	"""
+	Calcula status de secretarias (gasto vs limite) para o período filtrado.
+	df_limits pode ter múltiplas linhas por secretaria (uma por ano), e esta função
+	agrega o limite considerando quantos meses de cada ano estão no período.
+	"""
+	if df_filtered.empty or df_limits.empty:
+		return pd.DataFrame()
 
-    real = (
-        df_filtered.groupby("secretaria", as_index=False)
-        .agg(gasto_valor=("valor", "sum"), gasto_litros=("litros", "sum"))
-    )
+	# Gasto real por secretaria (de todo o período filtrado)
+	real = (
+		df_filtered.groupby("secretaria", as_index=False)
+		.agg(gasto_valor=("valor", "sum"), gasto_litros=("litros", "sum"))
+	)
 
-    base = df_limits.copy()
-    if "limite_mensal" not in base.columns:
-        base["limite_mensal"] = 0.0
-    if "limite_litros_mensal" not in base.columns:
-        base["limite_litros_mensal"] = 0.0
-    base["limite_valor_periodo"] = base["limite_mensal"] * months
-    base["limite_litros_periodo"] = base["limite_litros_mensal"] * months
+	# Contar meses por ano no período
+	df_filtered_copy = df_filtered.copy()
+	if "data_hora" in df_filtered_copy.columns and not df_filtered_copy.empty:
+		df_filtered_copy["ano"] = pd.to_datetime(df_filtered_copy["data_hora"]).dt.year
+		df_filtered_copy["ano_mes"] = pd.to_datetime(df_filtered_copy["data_hora"]).dt.to_period("M")
+		months_by_year = df_filtered_copy.groupby("ano")["ano_mes"].nunique().to_dict()
+	else:
+		# Se não há data, assume 1 mês
+		months_by_year = {}
 
-    merged = base.merge(real, on="secretaria", how="left").fillna(0.0)
-    merged["desvio_valor"] = merged["gasto_valor"] - merged["limite_valor_periodo"]
-    merged["desvio_pct"] = merged.apply(
-        lambda r: (r["desvio_valor"] / r["limite_valor_periodo"] * 100.0)
-        if r["limite_valor_periodo"] > 0
-        else 0.0,
-        axis=1,
-    )
-    merged["estourou_valor"] = merged["gasto_valor"] > merged["limite_valor_periodo"]
-    merged["estourou_litros"] = merged["gasto_litros"] > merged["limite_litros_periodo"]
-    merged["estouro_preco"] = merged["estourou_valor"] & ~merged["estourou_litros"]
-    merged["status"] = merged.apply(
-        lambda r: "ESTOURO POR PRECO"
-        if r["estouro_preco"]
-        else ("ESTOURO GERAL" if r["estourou_valor"] and r["estourou_litros"] else "OK"),
-        axis=1,
-    )
-    return merged
+	# Agregar limites por secretaria, somando do limite_mensal * meses de cada ano
+	base = df_limits.copy()
+	if "limite_mensal" not in base.columns:
+		base["limite_mensal"] = 0.0
+	if "limite_litros_mensal" not in base.columns:
+		base["limite_litros_mensal"] = 0.0
+	if "ano" not in base.columns:
+		# Se df_limits não tem coluna ano, assume que é do ano corrente
+		base["ano"] = datetime.date.today().year
+
+	# Calcular limite_valor_periodo por secretaria somando os anos
+	aggregated_limits = []
+	for sec in base["secretaria"].unique():
+		sec_data = base[base["secretaria"] == sec]
+		limite_valor_total = 0
+		limite_litros_total = 0
+		valor_empenhado_total = 0
+		limite_mensal_avg = 0.0  # Média do limite mensal para referência
+		limite_litros_mensal_avg = 0.0
+
+		for _, row in sec_data.iterrows():
+			ano = int(row["ano"])
+			meses_neste_ano = months_by_year.get(ano, 0)
+			if meses_neste_ano > 0:
+				limite_valor_total += float(row["limite_mensal"]) * meses_neste_ano
+				limite_litros_total += float(row["limite_litros_mensal"]) * meses_neste_ano
+			valor_empenhado_total += float(row.get("valor_empenhado", 0.0))
+			limite_mensal_avg += float(row["limite_mensal"])
+			limite_litros_mensal_avg += float(row["limite_litros_mensal"])
+
+		# Calcular média dos limites mensais disponíveis
+		n_years = len(sec_data)
+		limite_mensal_avg = limite_mensal_avg / n_years if n_years > 0 else 0.0
+		limite_litros_mensal_avg = limite_litros_mensal_avg / n_years if n_years > 0 else 0.0
+
+		aggregated_limits.append({
+			"secretaria": sec,
+			"limite_valor_periodo": limite_valor_total,
+			"limite_litros_periodo": limite_litros_total,
+			"valor_empenhado_total": valor_empenhado_total,
+			"limite_mensal": limite_mensal_avg,
+			"limite_litros_mensal": limite_litros_mensal_avg,
+		})
+
+	base_agg = pd.DataFrame(aggregated_limits)
+
+	# Merge com dados reais
+	merged = base_agg.merge(real, on="secretaria", how="left").fillna(0.0)
+	merged["desvio_valor"] = merged["gasto_valor"] - merged["limite_valor_periodo"]
+	merged["desvio_pct"] = merged.apply(
+		lambda r: (r["desvio_valor"] / r["limite_valor_periodo"] * 100.0)
+		if r["limite_valor_periodo"] > 0
+		else 0.0,
+		axis=1,
+	)
+	merged["estourou_valor"] = merged["gasto_valor"] > merged["limite_valor_periodo"]
+	merged["estourou_litros"] = merged["gasto_litros"] > merged["limite_litros_periodo"]
+	merged["estouro_preco"] = merged["estourou_valor"] & ~merged["estourou_litros"]
+	merged["status"] = merged.apply(
+		lambda r: "ESTOURO POR PRECO"
+		if r["estouro_preco"]
+		else ("ESTOURO GERAL" if r["estourou_valor"] and r["estourou_litros"] else "OK"),
+		axis=1,
+	)
+	return merged
 
 
 def build_kpis(
@@ -877,7 +1303,8 @@ def build_kpis(
     limite_total_periodo = float(status_df["limite_valor_periodo"].sum()) if "limite_valor_periodo" in status_df.columns else 0.0
 
     months = month_count(df_filtered)
-    valor_empenhado = float(df_limits["empenho_2026"].sum())
+    # Valor empenhado é a soma do empenho total (anual) dos anos no período
+    valor_empenhado = float(df_limits["valor_empenhado"].sum())
     saldo_empenho = valor_empenhado - gasto_total
     gasto_medio_mensal = gasto_total / months if months else 0.0
     cobertura = saldo_empenho / gasto_medio_mensal if gasto_medio_mensal > 0 else 0.0
@@ -990,13 +1417,14 @@ def make_ranking_consumo_secretaria(status_df: pd.DataFrame) -> go.Figure:
         return apply_plotly_theme(fig)
 
     df = status_df[status_df["gasto_valor"] > 0].copy()
-    df["saldo_empenho"] = (df["empenho_2026"] - df["gasto_valor"]).clip(lower=0) if "empenho_2026" in df.columns else 0
+    # Usar valor_empenhado_total (novo campo agregado) em vez de empenho_2026
+    df["saldo_empenho"] = (df["valor_empenhado_total"] - df["gasto_valor"]).clip(lower=0) if "valor_empenhado_total" in df.columns else 0
     df = df.sort_values("gasto_valor", ascending=True)
 
     def moeda_br(v):
         return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-    max_val = (df["empenho_2026"] if "empenho_2026" in df.columns else df["gasto_valor"]).max()
+    max_val = (df["valor_empenhado_total"] if "valor_empenhado_total" in df.columns else df["gasto_valor"]).max()
 
     fig = go.Figure()
     # Barra azul: gasto
@@ -1013,7 +1441,7 @@ def make_ranking_consumo_secretaria(status_df: pd.DataFrame) -> go.Figure:
         hovertemplate="<b>%{y}</b><br>Gasto: R$ %{x:,.2f}<extra></extra>",
     ))
     # Barra cinza: saldo do empenho
-    if "empenho_2026" in df.columns:
+    if "valor_empenhado_total" in df.columns:
         fig.add_trace(go.Bar(
             y=df["secretaria"],
             x=df["saldo_empenho"],
@@ -1452,6 +1880,8 @@ def make_line_custo_medio_rl_combustivel(df_filtered: pd.DataFrame) -> go.Figure
         return apply_plotly_theme(fig)
 
     df = df_filtered.copy()
+    # Unificar variantes do mesmo combustível antes de agrupar
+    df["combustivel"] = df["combustivel"].replace({"DIESEL S10": "DIESEL", "ETANOL": "ALCOOL"})
     grupo = (
         df.groupby(["mes", "combustivel"], as_index=False)
         .agg(valor=("valor", "sum"), litros=("litros", "sum"))
@@ -1489,7 +1919,11 @@ def make_line_custo_medio_rl_combustivel(df_filtered: pd.DataFrame) -> go.Figure
     fig.update_layout(
         template="plotly_dark",
         title="Custo médio R$/L por combustível",
-        xaxis_title="Mês",
+        xaxis={
+            "title": "Mês",
+            "categoryorder": "array",
+            "categoryarray": [MONTHS[m] for m in sorted(MONTHS)],
+        },
         yaxis_title="R$/L",
         yaxis_tickprefix="R$ ",
         yaxis_tickformat=".2f",
@@ -1505,6 +1939,238 @@ def make_line_custo_medio_rl_combustivel(df_filtered: pd.DataFrame) -> go.Figure
         },
     )
     return apply_plotly_theme(fig)
+
+
+def make_bar_comparativo_mensal_yoy(df_scope: pd.DataFrame, data_inicio, data_fim) -> go.Figure:
+	"""Barras agrupadas comparando o mesmo mês entre anos, filtrado pelo período selecionado."""
+	required = {"ano", "mes", "valor"}
+	if df_scope.empty or not required.issubset(df_scope.columns):
+		fig = go.Figure()
+		fig.update_layout(template="plotly_dark", title="Comparativo Mensal por Ano")
+		return apply_plotly_theme(fig)
+
+	months_short = {
+		1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 5: "Mai", 6: "Jun",
+		7: "Jul", 8: "Ago", 9: "Set", 10: "Out", 11: "Nov", 12: "Dez",
+	}
+
+	# Determina meses a exibir com base no período selecionado
+	if data_inicio and data_fim:
+		_meses_ini = data_inicio.month
+		_meses_fim = data_fim.month
+		if data_inicio.year == data_fim.year:
+			meses_filtro = list(range(_meses_ini, _meses_fim + 1))
+		else:
+			meses_filtro = list(range(1, 13))
+	else:
+		meses_filtro = list(range(1, 13))
+
+	df = df_scope.copy()
+	df = df[df["mes"].isin(meses_filtro)]
+	grupo = (
+		df.groupby(["ano", "mes"], as_index=False)
+		.agg(valor_total=("valor", "sum"))
+	)
+	if grupo.empty:
+		fig = go.Figure()
+		fig.update_layout(template="plotly_dark", title="Comparativo Mensal por Ano")
+		return apply_plotly_theme(fig)
+
+	PALETA = {
+		2024: "#7dd3fc",
+		2025: "#60a5fa",
+		2026: "#1d4ed8",
+	}
+	anos = sorted(grupo["ano"].unique())
+	meses_presentes = sorted(grupo["mes"].unique())
+	meses_labels = [months_short[m] for m in meses_presentes]
+
+	fig = go.Figure()
+	for ano in anos:
+		dados = grupo[grupo["ano"] == ano].set_index("mes")
+		y_vals = [float(dados.loc[m, "valor_total"]) if m in dados.index else None for m in meses_presentes]
+		fig.add_trace(go.Bar(
+			name=str(int(ano)),
+			x=meses_labels,
+			y=y_vals,
+			marker_color=PALETA.get(int(ano), "#94a3b8"),
+			text=[currency(v) if v else "" for v in y_vals],
+			textposition="outside",
+			textfont={"size": 11, "color": "#e7eef8"},
+			hovertemplate="<b>%{x} " + str(int(ano)) + "</b><br>R$ %{y:,.2f}<extra></extra>",
+		))
+
+	_title = "Comparativo Mensal por Ano"
+	if data_inicio and data_fim and data_inicio.year == data_fim.year:
+		_title = f"Comparativo Mensal: {data_inicio.year} vs anos anteriores"
+
+	fig.update_layout(
+		template="plotly_dark",
+		title=_title,
+		barmode="group",
+		bargap=0.18,
+		bargroupgap=0.05,
+		xaxis_title="Mês",
+		yaxis_title="Valor (R$)",
+		yaxis_tickprefix="R$ ",
+		yaxis_tickformat=",.0f",
+		margin={"l": 30, "r": 20, "t": 54, "b": 60},
+		legend={"orientation": "h", "x": 0.02, "y": 0.99, "xanchor": "left", "yanchor": "top",
+				"font": {"size": 13, "color": "#eaf2ff"}, "bgcolor": "rgba(8,17,28,0.65)"},
+	)
+	return apply_plotly_theme(fig)
+
+
+def make_bar_comparativo_mensal_yoy_litros(df_scope: pd.DataFrame, data_inicio, data_fim) -> go.Figure:
+	"""Barras agrupadas comparando litros consumidos no mesmo mês entre anos."""
+	required = {"ano", "mes", "litros"}
+	if df_scope.empty or not required.issubset(df_scope.columns):
+		fig = go.Figure()
+		fig.update_layout(template="plotly_dark", title="Comparativo Mensal por Ano (Litros)")
+		return apply_plotly_theme(fig)
+
+	months_short = {
+		1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 5: "Mai", 6: "Jun",
+		7: "Jul", 8: "Ago", 9: "Set", 10: "Out", 11: "Nov", 12: "Dez",
+	}
+
+	if data_inicio and data_fim:
+		if data_inicio.year == data_fim.year:
+			meses_filtro = list(range(data_inicio.month, data_fim.month + 1))
+		else:
+			meses_filtro = list(range(1, 13))
+	else:
+		meses_filtro = list(range(1, 13))
+
+	df = df_scope[df_scope["mes"].isin(meses_filtro)].copy()
+	grupo = df.groupby(["ano", "mes"], as_index=False).agg(litros_total=("litros", "sum"))
+	if grupo.empty:
+		fig = go.Figure()
+		fig.update_layout(template="plotly_dark", title="Comparativo Mensal por Ano (Litros)")
+		return apply_plotly_theme(fig)
+
+	PALETA = {2024: "#7dd3fc", 2025: "#60a5fa", 2026: "#1d4ed8"}
+	anos = sorted(grupo["ano"].unique())
+	meses_presentes = sorted(grupo["mes"].unique())
+	meses_labels = [months_short[m] for m in meses_presentes]
+
+	fig = go.Figure()
+	for ano in anos:
+		dados = grupo[grupo["ano"] == ano].set_index("mes")
+		y_vals = [float(dados.loc[m, "litros_total"]) if m in dados.index else None for m in meses_presentes]
+		fmt_vals = [f"{v:,.0f} L".replace(",", "X").replace(".", ",").replace("X", ".") if v else "" for v in y_vals]
+		fig.add_trace(go.Bar(
+			name=str(int(ano)),
+			x=meses_labels,
+			y=y_vals,
+			marker_color=PALETA.get(int(ano), "#94a3b8"),
+			text=fmt_vals,
+			textposition="outside",
+			textfont={"size": 11, "color": "#e7eef8"},
+			hovertemplate="<b>%{x} " + str(int(ano)) + "</b><br>%{y:,.0f} L<extra></extra>",
+		))
+
+	fig.update_layout(
+		template="plotly_dark",
+		title="Comparativo Mensal por Ano (Litros)",
+		barmode="group",
+		bargap=0.18,
+		bargroupgap=0.05,
+		xaxis_title="Mês",
+		yaxis_title="Litros",
+		yaxis_tickformat=",.0f",
+		margin={"l": 30, "r": 20, "t": 54, "b": 60},
+		legend={"orientation": "h", "x": 0.02, "y": 0.99, "xanchor": "left", "yanchor": "top",
+				"font": {"size": 13, "color": "#eaf2ff"}, "bgcolor": "rgba(8,17,28,0.65)"},
+	)
+	return apply_plotly_theme(fig)
+
+
+def make_line_sazonalidade_yoy(df_scope: pd.DataFrame) -> go.Figure:
+	"""Overlay mensal por ano para comparação de sazonalidade (YoY)."""
+	required = {"ano", "mes", "valor"}
+	if df_scope.empty or not required.issubset(df_scope.columns):
+		fig = go.Figure()
+		fig.update_layout(template="plotly_dark", title="Comparativo de Sazonalidade YoY")
+		return apply_plotly_theme(fig)
+
+	df = df_scope.copy()
+	grupo = (
+		df.groupby(["ano", "mes"], as_index=False)
+		.agg(valor_total=("valor", "sum"))
+		.sort_values(["ano", "mes"])
+	)
+	if grupo.empty:
+		fig = go.Figure()
+		fig.update_layout(template="plotly_dark", title="Comparativo de Sazonalidade YoY")
+		return apply_plotly_theme(fig)
+
+	months_short = {
+		1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 5: "Mai", 6: "Jun",
+		7: "Jul", 8: "Ago", 9: "Set", 10: "Out", 11: "Nov", 12: "Dez",
+	}
+	month_order = [months_short[m] for m in range(1, 13)]
+	anos = sorted(int(a) for a in grupo["ano"].dropna().unique())
+	ano_atual = max(anos)
+
+	# Anos anteriores em tons de azul mais claros, porém com contraste entre si.
+	styles_antigos = [
+		{"color": "#bfdbfe", "dash": "dot", "width": 2},
+		{"color": "#38bdf8", "dash": "dash", "width": 3},
+		{"color": "#60a5fa", "dash": "dashdot", "width": 2},
+		{"color": "#93c5fd", "dash": "dot", "width": 2},
+	]
+
+	fig = go.Figure()
+	antigos = [a for a in anos if a != ano_atual]
+	for idx, ano in enumerate(antigos):
+		dados = grupo[grupo["ano"] == ano].copy()
+		dados["mes_label"] = dados["mes"].map(months_short)
+		estilo = styles_antigos[min(idx, len(styles_antigos) - 1)]
+		fig.add_trace(go.Scatter(
+			x=dados["mes_label"],
+			y=dados["valor_total"],
+			mode="lines",
+			name=str(ano),
+			line={"color": estilo["color"], "width": estilo["width"], "dash": estilo["dash"]},
+			hovertemplate="<b>%{x}</b><br>Ano: " + str(ano) + "<br>Valor: R$ %{y:,.2f}<extra></extra>",
+		))
+
+	dados_atual = grupo[grupo["ano"] == ano_atual].copy()
+	dados_atual["mes_label"] = dados_atual["mes"].map(months_short)
+	fig.add_trace(go.Scatter(
+		x=dados_atual["mes_label"],
+		y=dados_atual["valor_total"],
+		mode="lines+markers",
+		name=f"{ano_atual} (Atual)",
+		line={"color": "#1d4ed8", "width": 4},
+		marker={"color": "#1d4ed8", "size": 8},
+		hovertemplate="<b>%{x}</b><br>Ano: " + str(ano_atual) + " (Atual)<br>Valor: R$ %{y:,.2f}<extra></extra>",
+	))
+
+	fig.update_layout(
+		template="plotly_dark",
+		title="Comparativo de Sazonalidade YoY",
+		xaxis={
+			"title": "Mês",
+			"categoryorder": "array",
+			"categoryarray": month_order,
+		},
+		yaxis_title="Valor total (R$)",
+		yaxis_tickprefix="R$ ",
+		yaxis_tickformat=",.0f",
+		margin={"l": 30, "r": 20, "t": 54, "b": 60},
+		legend={
+			"orientation": "h",
+			"x": 0.02,
+			"y": 0.99,
+			"xanchor": "left",
+			"yanchor": "top",
+			"font": {"size": 13, "color": "#eaf2ff"},
+			"bgcolor": "rgba(8, 17, 28, 0.65)",
+		},
+	)
+	return apply_plotly_theme(fig)
 
 
 def make_line_real_previsto_projecao(
@@ -1531,7 +2197,7 @@ def make_line_real_previsto_projecao(
         previsto_mensal = float(df_limits["limite_mensal"].sum())
         previsto_total = previsto_mensal * 12
     else:
-        empenho_total = float(df_limits["empenho_2026"].sum())
+        empenho_total = float(df_limits["valor_empenhado"].sum())
         previsto_total = empenho_total
         previsto_mensal = previsto_total / 12.0
 
@@ -1654,6 +2320,31 @@ def apply_filters(
     return df_f
 
 
+def get_years_from_date_range(data_inicio: datetime.date | None, data_fim: datetime.date | None) -> list[int]:
+	"""
+	Calcula a lista de anos contidos no intervalo de datas fornecido.
+	Se nenhuma data for fornecida, retorna o ano corrente.
+	"""
+	if data_inicio is None and data_fim is None:
+		return [datetime.date.today().year]
+	
+	start = data_inicio or datetime.date(2020, 1, 1)
+	end = data_fim or datetime.date.today()
+	
+	years = list(range(start.year, end.year + 1))
+	return sorted(set(years))
+
+
+def get_limits_df_for_period(data_inicio: datetime.date | None, data_fim: datetime.date | None) -> pd.DataFrame:
+	"""
+	Lê os parâmetros financeiros para os anos contidos no período filtrado.
+	Se o período cruzar múltiplos anos, retorna registros para todos eles agrupados por secretaria.
+	"""
+	years = get_years_from_date_range(data_inicio, data_fim)
+	df_limits = get_financial_params_by_years(years)
+	return df_limits
+
+
 def run_dashboard() -> None:
 	st.set_page_config(page_title="Painel de Abastecimento", page_icon="⛽", layout="wide", initial_sidebar_state="expanded")
 	_logo_path = Path(__file__).parent / "logo.svg"
@@ -1661,7 +2352,7 @@ def run_dashboard() -> None:
 		st.logo(str(_logo_path), size="large")
 	inject_style()
 
-	df_limits = get_limits_df()
+	# Carregar desconto_rate inicial (será refreshado conforme período selecionado)
 	discount_rate = get_discount_rate()
 	if "db_version" not in st.session_state:
 		st.session_state["db_version"] = 0
@@ -1758,7 +2449,9 @@ def run_dashboard() -> None:
 		st.stop()
 
 	# Opções dos selectboxes
-	secretaria_options = ["Todas"] + sorted(df_limits["secretaria"].dropna().unique().tolist())
+	# Carregar secretarias do banco para todas os anos disponíveis (para o selectbox)
+	df_all_limits = get_financial_params_by_years([2024, 2025, 2026])
+	secretaria_options = ["Todas"] + sorted(df_all_limits["secretaria"].dropna().unique().tolist())
 	combustivel_options = ["Todos"] + sorted(df_real["combustivel"].dropna().unique().tolist())
 
 	# Datas disponíveis no banco
@@ -1766,9 +2459,9 @@ def run_dashboard() -> None:
 	_raw_max = df_real["data_hora"].dt.date.max() if ("data_hora" in df_real.columns and not df_real.empty) else None
 	data_min_db = _raw_min if (isinstance(_raw_min, datetime.date) and not pd.isnull(_raw_min)) else datetime.date(2024, 1, 1)
 	data_max = _raw_max if (isinstance(_raw_max, datetime.date) and not pd.isnull(_raw_max)) else datetime.date.today()
-	# Padrão: 1º de janeiro do ano corrente até o último dado disponível, tudo clampado nos limites do banco
-	_hoje = datetime.date.today()
-	_default_ini = max(datetime.date(_hoje.year, 1, 1), data_min_db)
+	# Padrão: período vigente disponível no banco (início do ano da última data até a última data)
+	_ano_vigente = data_max.year if isinstance(data_max, datetime.date) else datetime.date.today().year
+	_default_ini = max(datetime.date(_ano_vigente, 1, 1), data_min_db)
 	_default_fim = data_max
 
 	with st.sidebar:
@@ -1793,10 +2486,14 @@ def run_dashboard() -> None:
 						del st.session_state[k]
 				st.rerun()
 
+		render_financial_params_editor_sidebar()
+
 		# ── Alertas (computados com escopo do ano corrente, todas secretarias) ──
 		_ano_ini = datetime.date(datetime.date.today().year, 1, 1)
 		df_alert_base = apply_filters(df_real, _ano_ini, datetime.date.today(), "Todas", "Todos")
-		status_alerts = build_secretaria_status(df_alert_base, df_limits)
+		# Carregar limites para o ano corrente (para alertas)
+		df_limits_for_alerts = get_limits_df_for_period(_ano_ini, datetime.date.today())
+		status_alerts = build_secretaria_status(df_alert_base, df_limits_for_alerts)
 
 		excedidas = status_alerts[status_alerts["status"].isin(["ESTOURO POR PRECO", "ESTOURO GERAL"])].copy() if "status" in status_alerts.columns else pd.DataFrame()
 		proximas = status_alerts[
@@ -1962,28 +2659,6 @@ def run_dashboard() -> None:
 
 			st.divider()
 
-			uploaded_cfg = st.file_uploader(
-				"Importar config.json",
-				type=["json"],
-				help="Substitui o config.json atual com o arquivo enviado.",
-				key="upload_config",
-			)
-			_last_cfg = st.session_state.get("_last_imported_config")
-			if uploaded_cfg is not None and uploaded_cfg.name != _last_cfg:
-				try:
-					_cfg_bytes = uploaded_cfg.read()
-					json.loads(_cfg_bytes)  # valida JSON antes de salvar
-					CONFIG_PATH.write_bytes(_cfg_bytes)
-					get_limits_df.clear()
-					get_discount_rate.clear()
-					st.session_state["_last_imported_config"] = uploaded_cfg.name
-					st.success("✅ config.json atualizado com sucesso! Recarregando...")
-					st.rerun()
-				except json.JSONDecodeError as _e:
-					st.error(f"❌ Arquivo JSON inválido: {_e}")
-				except Exception as _e:
-					st.error(f"❌ Erro ao salvar config.json: {_e}")
-
 		# ── Rodapé ──
 		ultima_atualizacao = data_max.strftime("%d/%m/%Y") if (data_max and isinstance(data_max, datetime.date)) else "—"
 		st.markdown(
@@ -1997,8 +2672,11 @@ def run_dashboard() -> None:
 	# ── Filtrar dados conforme seleção ──
 	filtered = apply_filters(df_real, data_inicio, data_fim, selected_secretaria, selected_combustivel)
 
-	# Para gráfico anual: sem filtro de período, só secretaria/combustivel
-	anual_scope = apply_filters(df_real, None, None, selected_secretaria, selected_combustivel)
+	# Carregar limites dinamicamente conforme período selecionado
+	df_limits = get_limits_df_for_period(data_inicio, data_fim)
+	# Gráfico anual comparativo sempre com visão global (todos os anos, sem filtros de sidebar)
+	anual_scope = apply_filters(df_real, None, None, "Todas", "Todos")
+	yoy_scope = apply_filters(df_real, None, None, selected_secretaria, selected_combustivel)
 
 	limits_scope = df_limits.copy()
 	if selected_secretaria != "Todas":
@@ -2031,7 +2709,31 @@ def run_dashboard() -> None:
 		unsafe_allow_html=True,
 	)
 
-	render_kpi_cards(kpis)
+	# ── Calcular deltas YoY para os KPI cards ──
+	_yoy_deltas: dict | None = None
+	if data_inicio and data_fim:
+		try:
+			_yoy_ini = data_inicio.replace(year=data_inicio.year - 1)
+			_yoy_fim = data_fim.replace(year=data_fim.year - 1)
+		except ValueError:
+			_yoy_ini = data_inicio.replace(year=data_inicio.year - 1, day=28)
+			_yoy_fim = data_fim.replace(year=data_fim.year - 1, day=28)
+		_filtered_yoy = apply_filters(df_real, _yoy_ini, _yoy_fim, selected_secretaria, selected_combustivel)
+		if not _filtered_yoy.empty:
+			_gasto_yoy = float(_filtered_yoy["valor"].sum())
+			_litros_yoy = float(_filtered_yoy["litros"].sum()) if "litros" in _filtered_yoy.columns else 0.0
+			_n_yoy = len(_filtered_yoy)
+			_ano_ref = _yoy_ini.year
+			def _pct_delta(cur, prev):
+				return (cur - prev) / prev * 100 if prev else None
+			_yoy_deltas = {
+				"gasto_total": (_pct_delta(kpis["gasto_total"], _gasto_yoy), _ano_ref),
+				"gasto_litros": (_pct_delta(kpis["gasto_litros"], _litros_yoy), _ano_ref) if _litros_yoy else None,
+				"n_abastecimentos": (_pct_delta(kpis["n_abastecimentos"], _n_yoy), _ano_ref),
+			}
+			if _yoy_deltas.get("gasto_litros") is None:
+				_yoy_deltas.pop("gasto_litros", None)
+	render_kpi_cards(kpis, deltas=_yoy_deltas)
 	st.caption(
 		f"Valores com desconto contratual de {discount_rate * 100:.2f}% aplicado sobre o valor bruto."
 	)
@@ -2041,12 +2743,17 @@ def run_dashboard() -> None:
 	with tab_fin:
 		col_ano, col_mes = st.columns([1, 2])
 		col_ano.plotly_chart(
-			make_bar_gasto_por_ano(anual_scope, selected_secretaria, selected_combustivel),
+			make_bar_gasto_por_ano(anual_scope, selected_secretaria, selected_combustivel, discount_rate),
 			use_container_width=True, key="bar_gasto_ano",
 		)
 		col_mes.plotly_chart(
 			make_bar_gasto_por_mes_unificado(filtered, selected_secretaria, selected_combustivel),
 			use_container_width=True, key="bar_gasto_mes_unificado",
+		)
+		st.plotly_chart(
+			make_bar_comparativo_mensal_yoy(yoy_scope, data_inicio, data_fim),
+			use_container_width=True,
+			key="bar_comparativo_mensal_yoy",
 		)
 		bar_col, donut_col = st.columns([2, 1])
 		bar_col.plotly_chart(make_bar_consumo_tipo_mes(filtered), use_container_width=True, key="bar_combustivel_fin")
@@ -2075,6 +2782,10 @@ def run_dashboard() -> None:
 		bar_con_col, donut_con_col = st.columns([2, 1])
 		bar_con_col.plotly_chart(make_bar_consumo_tipo_mes_litros(filtered), use_container_width=True, key="bar_combustivel_litros")
 		donut_con_col.plotly_chart(make_donut_combustivel(filtered), use_container_width=True, key="donut_combustivel")
+		st.plotly_chart(
+			make_bar_comparativo_mensal_yoy_litros(yoy_scope, data_inicio, data_fim),
+			use_container_width=True, key="bar_comp_mensal_litros",
+		)
 		st.plotly_chart(
 			make_line_custo_medio_mes_combustivel(filtered),
 			use_container_width=True, key="line_custo_medio",
