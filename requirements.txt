@@ -9,9 +9,11 @@ agno==2.5.17
 reportlab==4.4.1
 pytesseract
 Pillow
+rapidocr-onnxruntime
 opencv-python-headless
 beautifulsoup4
 lxml
 requests
 zxing-cpp
 playwright
+pymupdf

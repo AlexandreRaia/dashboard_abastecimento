@@ -1327,7 +1327,6 @@ def _gerar_dossie_docx(
         for k in ("total", "desconto", "troco"):
             if k in nfe_data:
                 _add_data_table([(k.title(), str(nfe_data[k]))])
-        doc.add_paragraph()
 
     # Link SEFAZ
     url_sefaz = qr_url or (
@@ -1360,19 +1359,16 @@ def _gerar_dossie_docx(
     # ═══════════════════════════════════════════════════════════════════════════
     # PÁGINA 2 — NFC-e (DANFE) em tamanho 100%
     # ═══════════════════════════════════════════════════════════════════════════
-    _nfce_img = nfce_screenshot
-    if not _nfce_img and _PLAYWRIGHT_OK and (ocr_data or nfe_data or chave):
-        _nfce_img, _ = _render_nfce_as_image(
-            ocr_data=ocr_data,
-            nfe_data=nfe_data,
-            chave=chave,
-            chave_data=chave_data,
-        )
+    _nfce_img = nfce_screenshot  # apenas screenshot real do SEFAZ
 
     if _nfce_img:
-        doc.add_page_break()
+        # pageBreakBefore no primeiro parágrafo da pg 2 — sem parágrafo extra,
+        # sem risco de página em branco entre pg 1 e pg 2.
+        _hline_pg2 = _add_hline("1565C0", "12")
+        _pPr_pg2 = _hline_pg2._p.get_or_add_pPr()
+        _pbBefore = _OxmlEl("w:pageBreakBefore")
+        _pPr_pg2.insert(0, _pbBefore)
 
-        _add_hline("1565C0", "12")
         _add_p("NFC-e — DANFE (Cópia SEFAZ SP)", bold=True, size=13,
                align=_WD_ALIGN.CENTER, color=(21, 101, 192), space_after=6)
 

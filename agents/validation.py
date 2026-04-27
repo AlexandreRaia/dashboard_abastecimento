@@ -61,6 +61,7 @@ class AgentValidacao:
         df = df.copy()
         if '_erro_km' not in df.columns:
             df['_erro_km'] = False
+        df['_erro_km'] = df['_erro_km'].astype(bool)
 
         # Km rodado negativo
         if 'km_rodado' in df.columns:

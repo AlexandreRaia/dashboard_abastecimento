@@ -13,6 +13,25 @@ BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "relatorio.db"
 DEFAULT_DISCOUNT_RATE = 0.0405
 
+
+def _ensure_db_schema() -> None:
+	"""Garante que todas as tabelas necessárias existam no banco de dados."""
+	with sqlite3.connect(DB_PATH) as conn:
+		conn.execute("""
+			CREATE TABLE IF NOT EXISTS parametros_financeiros_anuais (
+				secretaria TEXT NOT NULL,
+				ano INTEGER NOT NULL,
+				valor_empenhado REAL DEFAULT 0.0,
+				limite_litros_gasolina REAL DEFAULT 0.0,
+				limite_litros_alcool REAL DEFAULT 0.0,
+				limite_litros_diesel REAL DEFAULT 0.0,
+				desconto_percentual REAL DEFAULT 0.0,
+				PRIMARY KEY (secretaria, ano)
+			)
+		""")
+		conn.commit()
+
+
 MONTHS = {
     1: "Janeiro",
     2: "Fevereiro",
@@ -100,8 +119,13 @@ def make_bar_gasto_por_mes_unificado(
 		"variacao_pct": "first"  # ou média, se preferir
 	})
 	# Recalcular azul/vermelho após agregação
-	agrupado["azul"] = agrupado["valor_total_mes"].clip(upper=meta_mensal)
-	agrupado["vermelho"] = (agrupado["valor_total_mes"] - meta_mensal).clip(lower=0)
+	if meta_mensal > 0:
+		agrupado["azul"] = agrupado["valor_total_mes"].clip(upper=meta_mensal)
+		agrupado["vermelho"] = (agrupado["valor_total_mes"] - meta_mensal).clip(lower=0)
+	else:
+		# Sem parâmetros financeiros configurados: exibe tudo como azul
+		agrupado["azul"] = agrupado["valor_total_mes"]
+		agrupado["vermelho"] = 0.0
 	# Customdata: variacao, litros, meta, excesso
 	customdata = list(
 		zip(
@@ -701,6 +725,7 @@ def render_kpi_cards(kpis: dict[str, float | str], deltas: dict | None = None) -
 			<div class="kpi-card">
 				<div class="kpi-label">{kpis['label_valor_empenhado']}</div>
 				<div class="kpi-value">{currency(kpis['valor_empenhado'])}</div>
+				{_delta_badge('valor_empenhado', inverted=False)}
 			</div>
 			<div class="kpi-card">
 				<div class="kpi-label">Gasto Total Faturado</div>
@@ -714,6 +739,7 @@ def render_kpi_cards(kpis: dict[str, float | str], deltas: dict | None = None) -
 			<div class="kpi-card">
 				<div class="kpi-label">Média mensal de consumo</div>
 				<div class="kpi-value">{currency(kpis['media_mensal_consumo'])}</div>
+				{_delta_badge('media_mensal_consumo', inverted=True)}
 			</div>
 			<div class="kpi-card">
 				<div class="kpi-label">Meses de Cobertura</div>
@@ -729,10 +755,12 @@ def render_kpi_cards(kpis: dict[str, float | str], deltas: dict | None = None) -
 			<div class="kpi-card">
 				<div class="kpi-label">Consumo Médio</div>
 				<div class="kpi-value">{_fmt_num(kpis['consumo_medio'], 2)} km/L</div>
+				{_delta_badge('consumo_medio', inverted=False)}
 			</div>
 			<div class="kpi-card">
 				<div class="kpi-label">Custo Médio (R$/km)</div>
 				<div class="kpi-value">{currency(kpis['custo_por_km'])}</div>
+				{_delta_badge('custo_por_km', inverted=True)}
 			</div>
 			<div class="kpi-card">
 				<div class="kpi-label">Nº Abastecimentos</div>
@@ -742,17 +770,21 @@ def render_kpi_cards(kpis: dict[str, float | str], deltas: dict | None = None) -
 			<div class="kpi-card">
 				<div class="kpi-label">Veículos Ativos</div>
 				<div class="kpi-value">{kpis['veiculos_ativos']}</div>
+				{_delta_badge('veiculos_ativos', inverted=False)}
 			</div>
 		</div>
 		"""
-		st.markdown(html, unsafe_allow_html=True)
+		# Remove indentação de tabs — em Markdown, linhas iniciadas com tab são
+		# interpretadas como blocos de código, o que faz o HTML aparecer como texto cru.
+		html_clean = "\n".join(line.lstrip() for line in html.splitlines())
+		st.markdown(html_clean, unsafe_allow_html=True)
 
 
 def currency(value: float) -> str:
 	return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=60)
 def get_financial_params_by_years(anos: list[int], secretaria: str | None = None) -> pd.DataFrame:
 	"""
 	Lê parâmetros financeiros (empenho, limites, desconto) do banco para anos e opcionalmente secretaria específicas.
@@ -2346,6 +2378,7 @@ def get_limits_df_for_period(data_inicio: datetime.date | None, data_fim: dateti
 
 
 def run_dashboard() -> None:
+	_ensure_db_schema()
 	st.set_page_config(page_title="Painel de Abastecimento", page_icon="⛽", layout="wide", initial_sidebar_state="expanded")
 	_logo_path = Path(__file__).parent / "logo.svg"
 	if _logo_path.exists():
@@ -2459,9 +2492,9 @@ def run_dashboard() -> None:
 	_raw_max = df_real["data_hora"].dt.date.max() if ("data_hora" in df_real.columns and not df_real.empty) else None
 	data_min_db = _raw_min if (isinstance(_raw_min, datetime.date) and not pd.isnull(_raw_min)) else datetime.date(2024, 1, 1)
 	data_max = _raw_max if (isinstance(_raw_max, datetime.date) and not pd.isnull(_raw_max)) else datetime.date.today()
-	# Padrão: período vigente disponível no banco (início do ano da última data até a última data)
-	_ano_vigente = data_max.year if isinstance(data_max, datetime.date) else datetime.date.today().year
-	_default_ini = max(datetime.date(_ano_vigente, 1, 1), data_min_db)
+	# Padrão: ano corrente (01/01/ano_atual até hoje)
+	_ano_corrente = datetime.date.today().year
+	_default_ini = max(datetime.date(_ano_corrente, 1, 1), data_min_db)
 	_default_fim = data_max
 
 	with st.sidebar:
@@ -2724,15 +2757,31 @@ def run_dashboard() -> None:
 			_litros_yoy = float(_filtered_yoy["litros"].sum()) if "litros" in _filtered_yoy.columns else 0.0
 			_n_yoy = len(_filtered_yoy)
 			_ano_ref = _yoy_ini.year
+			_months_yoy = month_count(_filtered_yoy)
+			_media_yoy = _gasto_yoy / _months_yoy if _months_yoy else 0.0
+			_consumo_yoy = float(_filtered_yoy["km_por_litro"].mean()) if "km_por_litro" in _filtered_yoy.columns and _filtered_yoy["km_por_litro"].notna().any() else 0.0
+			_custo_km_yoy = float(_filtered_yoy["custo_por_km"].mean()) if "custo_por_km" in _filtered_yoy.columns and _filtered_yoy["custo_por_km"].notna().any() else 0.0
+			_veiculos_yoy = _filtered_yoy["placa"].nunique() if "placa" in _filtered_yoy.columns else 0
+			# Empenho do ano anterior (independe de ter dados de abastecimento no período YoY)
+			_limits_prev = get_financial_params_by_years([_yoy_ini.year])
+			if selected_secretaria != "Todas":
+				_limits_prev = _limits_prev[_limits_prev["secretaria"] == normalize_secretaria(selected_secretaria)]
+			_empenhado_yoy = float(_limits_prev["valor_empenhado"].sum()) if not _limits_prev.empty else 0.0
 			def _pct_delta(cur, prev):
 				return (cur - prev) / prev * 100 if prev else None
 			_yoy_deltas = {
+				"valor_empenhado": (_pct_delta(kpis["valor_empenhado"], _empenhado_yoy), _ano_ref) if _empenhado_yoy else None,
 				"gasto_total": (_pct_delta(kpis["gasto_total"], _gasto_yoy), _ano_ref),
 				"gasto_litros": (_pct_delta(kpis["gasto_litros"], _litros_yoy), _ano_ref) if _litros_yoy else None,
 				"n_abastecimentos": (_pct_delta(kpis["n_abastecimentos"], _n_yoy), _ano_ref),
+				"media_mensal_consumo": (_pct_delta(kpis["media_mensal_consumo"], _media_yoy), _ano_ref) if _media_yoy else None,
+				"consumo_medio": (_pct_delta(kpis["consumo_medio"], _consumo_yoy), _ano_ref) if _consumo_yoy else None,
+				"custo_por_km": (_pct_delta(kpis["custo_por_km"], _custo_km_yoy), _ano_ref) if _custo_km_yoy else None,
+				"veiculos_ativos": (_pct_delta(kpis["veiculos_ativos"], _veiculos_yoy), _ano_ref) if _veiculos_yoy else None,
 			}
-			if _yoy_deltas.get("gasto_litros") is None:
-				_yoy_deltas.pop("gasto_litros", None)
+			for _k in ("valor_empenhado", "gasto_litros", "media_mensal_consumo", "consumo_medio", "custo_por_km", "veiculos_ativos"):
+				if _yoy_deltas.get(_k) is None:
+					_yoy_deltas.pop(_k, None)
 	render_kpi_cards(kpis, deltas=_yoy_deltas)
 	st.caption(
 		f"Valores com desconto contratual de {discount_rate * 100:.2f}% aplicado sobre o valor bruto."

@@ -5,6 +5,10 @@ from plotly_utils import apply_plotly_theme
 
 def make_bar_consumo_secretaria(df: pd.DataFrame, df_limits: pd.DataFrame) -> go.Figure:
     # df é o status df: secretaria, gasto_valor, limite_valor_periodo, empenho_2026, ...
+    if df is None or df.empty or "secretaria" not in df.columns:
+        fig = go.Figure()
+        fig.update_layout(template="plotly_dark", title="Sem dados por secretaria")
+        return apply_plotly_theme(fig)
     consumo = df.copy()
     consumo["secretaria"] = consumo["secretaria"].map(lambda x: str(x).strip().upper())
 
