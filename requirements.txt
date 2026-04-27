@@ -7,3 +7,11 @@ python-docx==1.2.0
 pyarrow==23.0.1
 agno==2.5.17
 reportlab==4.4.1
+pytesseract
+Pillow
+opencv-python-headless
+beautifulsoup4
+lxml
+requests
+zxing-cpp
+playwright

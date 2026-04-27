@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Databases
+*.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Debug / temp
+debug_*.png
+debug_*.py
+
+# Docs gerados
+modelo.docx
+auditoria_resultados.db
+
+# Config local
+config.json
