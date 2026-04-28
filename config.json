@@ -1,5 +1,10 @@
 {
   "desconto_percentual": 0.0405,
+  "api_sisatec": {
+    "codigo": "11845",
+    "key": "547536145C3E6FA5EDEBCCF4403290613C261039",
+    "base_url": "https://ws.sisatec.com.br/api/abastecimento/bydata"
+  },
   "secretarias": [
     {
       "sigla": "SEMUTTRANS",

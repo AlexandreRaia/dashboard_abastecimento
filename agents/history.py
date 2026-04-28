@@ -63,6 +63,11 @@ class AgentHistorico:
         df_stats = df_base_stats.loc[mask_stats, ['placa', 'litros']].copy()
         df_stats['consumo'] = consumo_valido.loc[mask_stats]
 
+        # Contagem TOTAL de registros por placa na janela (antes do filtro de validade)
+        # Usada para dar mensagem precisa no R11: distingue "sem histórico" de "histórico inválido"
+        contagem_total_series = df_base_stats.groupby('placa')['litros'].count().reset_index()
+        contagem_total_series.columns = ['placa', 'contagem_total']
+
         stats = (
             df_stats.groupby('placa')
             .agg(
@@ -74,6 +79,7 @@ class AgentHistorico:
             )
             .reset_index()
         )
+        stats = stats.merge(contagem_total_series, on='placa', how='outer')
 
         df = df.merge(stats, on='placa', how='left')
 

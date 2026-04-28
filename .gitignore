@@ -24,6 +24,8 @@ Thumbs.db
 # Debug / temp
 debug_*.png
 debug_*.py
+check_db.py
+pip_out.txt
 
 # Docs gerados
 modelo.docx

@@ -174,38 +174,25 @@ class AgentStorageSQLite:
 
         colunas = [c for c in df_store.columns]
         colunas_sql = ', '.join([_q(c) for c in colunas])
-        tmp_table = '__tmp_import_hist__'
 
         def _executar(caminho_db: str):
             nonlocal conn
             conn = sqlite3.connect(caminho_db)
             cur = conn.cursor()
 
-            # Carrega lote em tabela temporaria via SQL direto
-            # (pandas 3.0 mudou o controle de transações em to_sql,
-            #  causando "no such table" ao misturar cursor manual com to_sql)
-            cur.execute(f'DROP TABLE IF EXISTS {_q(tmp_table)}')
+            # Cria tabela principal se ainda nao existir usando as colunas do dataframe.
+            # Evita tabela temporaria intermediaria — incompativel com o controle de
+            # transacoes do sqlite3 em Python 3.12+ (DDL nao auto-commita mais).
             col_defs = ', '.join([f'{_q(c)} TEXT' for c in colunas])
-            cur.execute(f'CREATE TABLE {_q(tmp_table)} ({col_defs})')
-            placeholders = '(' + ','.join(['?' for _ in colunas]) + ')'
-            rows = [
-                tuple(None if (v is None or (isinstance(v, float) and v != v)) else str(v) for v in row)
-                for row in df_store.itertuples(index=False, name=None)
-            ]
-            cur.executemany(f'INSERT INTO {_q(tmp_table)} ({colunas_sql}) VALUES {placeholders}', rows)
+            cur.execute(f'CREATE TABLE IF NOT EXISTS {_q(table_name)} ({col_defs})')
             conn.commit()
-
-            # Cria tabela principal se ainda nao existir
-            cur.execute(
-                f'CREATE TABLE IF NOT EXISTS {_q(table_name)} AS '
-                f'SELECT * FROM {_q(tmp_table)} WHERE 1=0'
-            )
 
             # Evolucao de schema: se o lote tiver novas colunas, adiciona na tabela.
             cols_existentes = [r[1] for r in cur.execute(f'PRAGMA table_info({_q(table_name)})').fetchall()]
             for c in colunas:
                 if c not in cols_existentes:
                     cur.execute(f'ALTER TABLE {_q(table_name)} ADD COLUMN {_q(c)} TEXT')
+            conn.commit()
 
             pre_count = cur.execute(f'SELECT COUNT(*) FROM {_q(table_name)}').fetchone()[0]
 
@@ -220,33 +207,39 @@ class AgentStorageSQLite:
             # Indices operacionais para acelerar filtros e ordenacoes comuns no dashboard.
             if 'placa' in colunas and 'data_hora' in colunas:
                 cur.execute(
-                    f'CREATE INDEX IF NOT EXISTS {_q(f"ix_{table_name}_placa_data") } '
+                    f'CREATE INDEX IF NOT EXISTS {_q(f"ix_{table_name}_placa_data")} '
                     f'ON {_q(table_name)} ({_q("placa")}, {_q("data_hora")})'
                 )
             if 'condutor' in colunas:
                 cur.execute(
-                    f'CREATE INDEX IF NOT EXISTS {_q(f"ix_{table_name}_condutor") } '
+                    f'CREATE INDEX IF NOT EXISTS {_q(f"ix_{table_name}_condutor")} '
                     f'ON {_q(table_name)} ({_q("condutor")})'
                 )
             if 'estabelecimento' in colunas:
                 cur.execute(
-                    f'CREATE INDEX IF NOT EXISTS {_q(f"ix_{table_name}_estabelecimento") } '
+                    f'CREATE INDEX IF NOT EXISTS {_q(f"ix_{table_name}_estabelecimento")} '
                     f'ON {_q(table_name)} ({_q("estabelecimento")})'
                 )
+            conn.commit()
 
+            # Insere os dados diretamente (sem tabela temporaria intermediaria).
+            placeholders = '(' + ','.join(['?' for _ in colunas]) + ')'
+            rows = [
+                tuple(None if (v is None or (isinstance(v, float) and v != v)) else str(v) for v in row)
+                for row in df_store.itertuples(index=False, name=None)
+            ]
             if chave_existente:
-                cur.execute(
-                    f'INSERT OR IGNORE INTO {_q(table_name)} ({colunas_sql}) '
-                    f'SELECT {colunas_sql} FROM {_q(tmp_table)}'
+                cur.executemany(
+                    f'INSERT OR IGNORE INTO {_q(table_name)} ({colunas_sql}) VALUES {placeholders}',
+                    rows
                 )
             else:
-                cur.execute(
-                    f'INSERT INTO {_q(table_name)} ({colunas_sql}) '
-                    f'SELECT {colunas_sql} FROM {_q(tmp_table)}'
+                cur.executemany(
+                    f'INSERT INTO {_q(table_name)} ({colunas_sql}) VALUES {placeholders}',
+                    rows
                 )
 
             post_count = cur.execute(f'SELECT COUNT(*) FROM {_q(table_name)}').fetchone()[0]
-            cur.execute(f'DROP TABLE IF EXISTS {_q(tmp_table)}')
             conn.commit()
 
             df_db = pd.read_sql_query(f'SELECT * FROM {_q(table_name)}', conn)

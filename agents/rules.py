@@ -523,20 +523,46 @@ class AgentRegras:
             if placa not in placas_sem_hist or placa in emitidas:
                 continue
             emitidas.add(placa)
-            contagem = row.get('contagem', 0) or 0
+            contagem = int(row.get('contagem', 0) or 0)
+            contagem_total = int(row.get('contagem_total', 0) or 0)
+            dias = THRESHOLDS.get('dias_historico_rolling', 90)
+
+            # Distingue entre "sem registros" e "registros existem mas são inválidos"
+            if contagem_total > 0 and contagem == 0:
+                descricao = (
+                    f"Placa {placa} possui {contagem_total} registro(s) nos ultimos {dias} dias, "
+                    f"porem todos foram excluidos da comparacao estatistica por apresentarem "
+                    f"consumo invalido (hodometro zerado ou leitura imposivel). "
+                    f"Regras R09 e R10 nao foram aplicadas."
+                )
+                evidencia = f"{contagem_total} registros (0 validos para estatistica)"
+            elif contagem_total > 0 and contagem < min_hist:
+                descricao = (
+                    f"Placa {placa} possui apenas {contagem} registro(s) valido(s) nos ultimos "
+                    f"{dias} dias (minimo: {min_hist}). "
+                    f"{contagem_total - contagem} registro(s) foram excluidos por consumo invalido. "
+                    f"Regras R09 e R10 nao foram aplicadas."
+                )
+                evidencia = f"{contagem} validos de {contagem_total} registros"
+            else:
+                descricao = (
+                    f"Placa {placa} possui apenas {contagem} registro(s) nos ultimos "
+                    f"{dias} dias (minimo: {min_hist}). Regras R09 e R10 nao foram aplicadas."
+                )
+                evidencia = f"{contagem} registros historicos"
+
             res.append(_oc(
                 'R11',
                 'historico insuficiente para comparacao estatistica',
-                (f"Placa {placa} possui apenas {int(contagem)} registro(s) nos ultimos "
-                 f"{THRESHOLDS.get('dias_historico_rolling', 90)} dias "
-                 f"(minimo: {min_hist}). Regras R09 e R10 nao foram aplicadas."),
+                descricao,
                 'BAIXA', row,
-                f"{int(contagem)} registros historicos",
-                f">= {min_hist} registros",
+                evidencia,
+                f">= {min_hist} registros validos",
                 (f"Placa: {placa} | "
-                 f"Registros nos ultimos {THRESHOLDS.get('dias_historico_rolling', 90)} dias: {int(contagem)} | "
+                 f"Registros totais nos ultimos {dias} dias: {contagem_total} | "
+                 f"Registros validos para estatistica: {contagem} | "
                  f"Minimo necessario: {min_hist}. "
                  f"Recomenda-se auditoria manual deste veiculo."),
-                "Solicitar documentacao de uso do veiculo ao gestor responsavel.",
+                "Verificar consistencia do hodometro e solicitar documentacao de uso ao gestor responsavel.",
             ))
         return res

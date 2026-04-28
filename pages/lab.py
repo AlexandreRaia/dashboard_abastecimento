@@ -1109,11 +1109,18 @@ def _gerar_dossie_docx(
         doc = _Document(str(MODELO))
         sec = doc.sections[0]
 
-        # Extrai o logo (image2.jpg = rId6) e move para o header como imagem inline.
-        # No original era imagem flutuante com posição absoluta no corpo —
-        # isso causava desalinhamento. No header fica correto em todas as páginas.
+        # Extrai o logo do header do modelo e move para o header como imagem inline.
+        # rId6 aponta para a parte de header (XML); a imagem está nas rels do header.
         _logo_rel = doc.part.rels.get("rId6")
-        _logo_bytes_tmp = _logo_rel.target_part.blob if _logo_rel else None
+        _logo_bytes_tmp = None
+        if _logo_rel and not _logo_rel.is_external:
+            _hdr_part_src = _logo_rel.target_part
+            for _img_rel in _hdr_part_src.rels.values():
+                if not _img_rel.is_external and hasattr(_img_rel, "target_part"):
+                    _img_ct = getattr(_img_rel.target_part, "content_type", "")
+                    if _img_ct.startswith("image/"):
+                        _logo_bytes_tmp = _img_rel.target_part.blob
+                        break
 
         hdr = sec.header
         hdr.paragraphs[0].clear()

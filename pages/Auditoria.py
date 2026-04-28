@@ -962,20 +962,16 @@ def apply_filters(df, filtros, fuel_map):
     # Evita copia completa da base em toda iteracao dos filtros.
     base_df = df
 
-    ano_filter = filtros.get('ano', 'Todos')
-    if ano_filter and ano_filter != 'Todos' and 'ano' in base_df.columns:
-        base_df = base_df[base_df['ano'].astype(str) == str(ano_filter)]
-
-    mes_filter = filtros.get('mes', 'Todos')
-    if mes_filter and mes_filter != 'Todos' and 'mes' in base_df.columns:
-        _MONTHS_LOCAL = {
-            1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
-            5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
-            9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
-        }
-        _num = {v: k for k, v in _MONTHS_LOCAL.items()}.get(mes_filter)
-        if _num is not None:
-            base_df = base_df[base_df['mes'].astype(int) == _num]
+    data_inicio = filtros.get('data_inicio')
+    data_fim = filtros.get('data_fim')
+    if (data_inicio or data_fim) and 'data' in base_df.columns:
+        _col = pd.to_datetime(base_df['data'], errors='coerce').dt.date
+        if data_inicio:
+            _di = data_inicio if isinstance(data_inicio, __import__('datetime').date) else __import__('datetime').date.fromisoformat(str(data_inicio))
+            base_df = base_df[_col >= _di]
+        if data_fim:
+            _df_d = data_fim if isinstance(data_fim, __import__('datetime').date) else __import__('datetime').date.fromisoformat(str(data_fim))
+            base_df = base_df[_col <= _df_d]
 
     fuel_filter = filtros.get('fuel', 'Todos')
     if 'combustivel_norm' in base_df.columns and fuel_filter in fuel_map:
@@ -2411,9 +2407,10 @@ if 'ultima_carga' not in st.session_state:
 if 'active_db_path' not in st.session_state:
     st.session_state.active_db_path = str(RESULTADOS_DB)
 if 'filtros_ui' not in st.session_state:
+    _hoje = datetime.now().date()
     st.session_state.filtros_ui = {
-        'ano': str(datetime.now().year),
-        'mes': _MONTHS[datetime.now().month],
+        'data_inicio': datetime(_hoje.year, 1, 1).date(),
+        'data_fim': _hoje,
         'fuel': 'Todos',
         'unidade': 'Todas',
         'marca': 'Todos',
@@ -2521,7 +2518,16 @@ if info_hist.get('db_path'):
 
 # ── Cabeçalho principal no estilo do Financeiro ──
 _ano_ctx = st.session_state.filtros_ui.get('ano', 'Todos')
-_filtro_ctx = _ano_ctx if _ano_ctx != 'Todos' else 'Todos os anos'
+_di_ctx = st.session_state.filtros_ui.get('data_inicio')
+_df_ctx = st.session_state.filtros_ui.get('data_fim')
+if _di_ctx and _df_ctx:
+    _filtro_ctx = f"{_di_ctx.strftime('%d/%m/%Y')} — {_df_ctx.strftime('%d/%m/%Y')}"
+elif _di_ctx:
+    _filtro_ctx = f"A partir de {_di_ctx.strftime('%d/%m/%Y')}"
+elif _df_ctx:
+    _filtro_ctx = f"Até {_df_ctx.strftime('%d/%m/%Y')}"
+else:
+    _filtro_ctx = "Todos os períodos"
 st.markdown(
     f'<div style="display:flex;align-items:baseline;gap:16px;margin-bottom:0.5rem;padding-bottom:0.4rem;border-bottom:1px solid rgba(142,163,190,0.18);">'
     f'<span style="font-family:\'Rajdhani\',sans-serif;font-size:2rem;font-weight:700;color:#e7eef8;letter-spacing:0.02em;">AUDITORIA DE ABASTECIMENTO</span>'
@@ -2583,13 +2589,17 @@ fuel_map = {
 }
 filtros_ui = st.session_state.filtros_ui
 
+# Datas disponíveis no df para limitar os date_inputs
+_datas_df = pd.to_datetime(df['data'], errors='coerce').dropna()
+_data_min_df = _datas_df.min().date() if not _datas_df.empty else datetime.now().date().replace(month=1, day=1)
+_data_max_df = _datas_df.max().date() if not _datas_df.empty else datetime.now().date()
+_hoje = datetime.now().date()
+_default_di = filtros_ui.get('data_inicio') or datetime(_hoje.year, 1, 1).date()
+_default_df = filtros_ui.get('data_fim') or _hoje
+
 # Opções dos filtros
-anos_disponiveis = ["Todos"] + sorted(
-    df['ano'].dropna().unique().astype(int).astype(str).tolist(), reverse=True
-) if 'ano' in df.columns else ["Todos"]
 fuel_options = ["Todos"] + sorted(list(fuel_map.keys()))
 unidade_options = ["Todas"] + sorted(df['unidade_alerta'].dropna().astype(str).unique().tolist()) if 'unidade_alerta' in df.columns else ["Todas"]
-meses_disponiveis = ["Todos"] + [_MONTHS[m] for m in sorted(_MONTHS.keys())]
 marca_options = ["Todos"] + sorted(df['Marca'].dropna().astype(str).unique().tolist()) if 'Marca' in df.columns else ["Todos"]
 cond_options = ["Todos"] + sorted(df['Condutor'].dropna().astype(str).unique().tolist())
 placa_options = ["Todos"] + sorted(df['Placa'].dropna().astype(str).unique().tolist())
@@ -2602,10 +2612,6 @@ modelos_norm = (
     .replace('', pd.NA).dropna().apply(canonicalizar_modelo)
 ) if 'Modelo' in df_modelos_filtro.columns else pd.Series(dtype=str)
 modelo_options = sorted(modelos_norm.dropna().unique().tolist())
-
-# Índices padrão
-_ano_default = filtros_ui.get('ano', str(datetime.now().year))
-_ano_idx = anos_disponiveis.index(_ano_default) if _ano_default in anos_disponiveis else 0
 
 with st.sidebar:
     # ── Brand (topo fixo) ──
@@ -2623,8 +2629,22 @@ with st.sidebar:
     )
 
     with st.expander("🔍 Filtros", expanded=False):
-        selected_ano = st.selectbox("Ano", anos_disponiveis, index=_ano_idx, key="aud_sel_ano")
-        selected_mes = st.selectbox("Mês", meses_disponiveis, index=safe_index(meses_disponiveis, filtros_ui.get('mes', 'Todos')), key="aud_sel_mes")
+        selected_data_inicio = st.date_input(
+            "Data inicial",
+            value=_default_di,
+            min_value=_data_min_df,
+            max_value=_data_max_df,
+            format="DD/MM/YYYY",
+            key="aud_sel_data_inicio",
+        )
+        selected_data_fim = st.date_input(
+            "Data final",
+            value=_default_df,
+            min_value=_data_min_df,
+            max_value=_data_max_df,
+            format="DD/MM/YYYY",
+            key="aud_sel_data_fim",
+        )
         selected_fuel = st.selectbox("Combustível", fuel_options, index=safe_index(fuel_options, filtros_ui.get('fuel', 'Todos')), key="aud_sel_fuel")
         selected_unidade = st.selectbox("Secretaria", unidade_options, index=safe_index(unidade_options, filtros_ui.get('unidade', 'Todas')), key="aud_sel_unidade")
         selected_marca = st.selectbox("Marca", marca_options, index=safe_index(marca_options, filtros_ui.get('marca', 'Todos')), key="aud_sel_marca")
@@ -2663,8 +2683,11 @@ with st.sidebar:
             aplicar_filtros = st.button("✅ Aplicar", use_container_width=True)
         with col_lim:
             if st.button("🗑️ Limpar", use_container_width=True):
+                _hoje_lim = datetime.now().date()
                 st.session_state.filtros_ui = {
-                    'ano': 'Todos', 'mes': 'Todos', 'fuel': 'Todos', 'unidade': 'Todas',
+                    'data_inicio': datetime(_hoje_lim.year, 1, 1).date(),
+                    'data_fim': _hoje_lim,
+                    'fuel': 'Todos', 'unidade': 'Todas',
                     'marca': 'Todos', 'modelo': 'Todos', 'condutor': 'Todos', 'placa': 'Todos',
                 }
                 st.session_state.resultado_processado = None
@@ -2682,8 +2705,8 @@ if aplicar_filtros:
     st.session_state.outlier_sigma_mult = float(sigma_mult)
     _modelo_to_store = selected_modelos if selected_modelos else 'Todos'
     st.session_state.filtros_ui = {
-        'ano': selected_ano,
-        'mes': selected_mes,
+        'data_inicio': selected_data_inicio,
+        'data_fim': selected_data_fim,
         'fuel': selected_fuel,
         'unidade': selected_unidade,
         'marca': selected_marca,
@@ -3150,12 +3173,16 @@ if st.session_state.resultado_processado is not None:
                             st.success("Configuração salva para esta sessão.")
 
                     for i, notif in enumerate(notificacoes_agente, 1):
+                        # Chave estável baseada no conteúdo — imune a reordenamentos/filtros
+                        _uid = hashlib.md5(
+                            f"{notif.get('placa','')}{notif.get('condutor','')}{notif.get('data_abastecimento','')}".encode()
+                        ).hexdigest()[:10]
                         label = f"{i}. Placa {notif.get('placa','?')} · {notif.get('condutor','?')} — {notif.get('gravidade_max','?')}"
                         with st.expander(label, expanded=False):
-                            st.text_area("", value=notif.get('texto_notificacao', notif.get('minuta', '')), height=260, key=f"notif_{i}", label_visibility="collapsed")
+                            st.text_area("", value=notif.get('texto_notificacao', notif.get('minuta', '')), height=260, key=f"notif_{_uid}", label_visibility="collapsed")
 
                             # Destinatário individual por notificação
-                            _dest_key = f"notif_dest_{i}"
+                            _dest_key = f"notif_dest_{_uid}"
                             _dest_default = st.session_state.get(_dest_key, '')
                             _dest_email = st.text_input(
                                 "📧 E-mail do destinatário",
@@ -3180,13 +3207,13 @@ if st.session_state.resultado_processado is not None:
                                         data=_word_bytes,
                                         file_name=f"notificacao_{_placa_slug}_{i}.docx",
                                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                        key=f"dl_notif_word_{i}",
+                                        key=f"dl_notif_word_{_uid}",
                                         use_container_width=True,
                                     )
                                 except Exception as _e:
                                     st.warning(f"⚠️ Erro ao gerar Word: {_e}")
                             with _btn_col2:
-                                if st.button("📧 Enviar por E-mail", key=f"btn_email_{i}", use_container_width=True):
+                                if st.button("📧 Enviar por E-mail", key=f"btn_email_{_uid}", use_container_width=True):
                                     _cfg = st.session_state.get('email_config', {})
                                     if not _dest_email.strip():
                                         st.warning("Informe o e-mail do destinatário acima.")

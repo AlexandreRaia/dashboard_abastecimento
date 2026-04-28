@@ -26,9 +26,14 @@ def _ensure_db_schema() -> None:
 				limite_litros_alcool REAL DEFAULT 0.0,
 				limite_litros_diesel REAL DEFAULT 0.0,
 				desconto_percentual REAL DEFAULT 0.0,
+				updated_at TEXT DEFAULT NULL,
 				PRIMARY KEY (secretaria, ano)
 			)
 		""")
+		# Migração: adiciona colunas que podem não existir em bancos mais antigos
+		_colunas_existentes = {row[1] for row in conn.execute("PRAGMA table_info(parametros_financeiros_anuais)")}
+		if 'updated_at' not in _colunas_existentes:
+			conn.execute("ALTER TABLE parametros_financeiros_anuais ADD COLUMN updated_at TEXT DEFAULT NULL")
 		conn.commit()
 
 
@@ -706,18 +711,25 @@ def render_kpi_cards(kpis: dict[str, float | str], deltas: dict | None = None) -
 			fmt = f"{v:,.{dec}f}".replace(",", "X").replace(".", ",").replace("X", ".")
 			return fmt
 
-		def _delta_badge(key, inverted=False):
+		def _delta_badge(key, inverted=False, neutral=False):
 			"""Retorna HTML do badge YoY ou string vazia se não disponível."""
 			if not deltas or key not in deltas:
 				return ""
 			pct, ano_ref = deltas[key]
 			if pct is None:
 				return ""
+			# Suprime badges com variação insignificante (ruído visual)
+			if abs(pct) < 0.5:
+				return ""
 			is_up = pct > 0
-			is_bad = is_up if inverted else not is_up
-			color = "#f87171" if is_bad else "#4ade80"
-			bg = "rgba(239,68,68,0.15)" if is_bad else "rgba(34,197,94,0.15)"
 			arrow = "▲" if is_up else "▼"
+			if neutral:
+				color = "#94a3b8"
+				bg = "rgba(148,163,184,0.15)"
+			else:
+				is_bad = is_up if inverted else not is_up
+				color = "#f87171" if is_bad else "#4ade80"
+				bg = "rgba(239,68,68,0.15)" if is_bad else "rgba(34,197,94,0.15)"
 			return f'<div class="kpi-delta" style="color:{color};background:{bg};">{arrow} {abs(pct):.1f}% vs {ano_ref}</div>'
 
 		html = f"""
@@ -725,12 +737,11 @@ def render_kpi_cards(kpis: dict[str, float | str], deltas: dict | None = None) -
 			<div class="kpi-card">
 				<div class="kpi-label">{kpis['label_valor_empenhado']}</div>
 				<div class="kpi-value">{currency(kpis['valor_empenhado'])}</div>
-				{_delta_badge('valor_empenhado', inverted=False)}
+				{_delta_badge('valor_empenhado', neutral=True)}
 			</div>
 			<div class="kpi-card">
 				<div class="kpi-label">Gasto Total Faturado</div>
 				<div class="kpi-value">{currency(kpis['gasto_total'])}</div>
-				{_delta_badge('gasto_total', inverted=True)}
 			</div>
 			<div class="kpi-card">
 				<div class="kpi-label">{kpis['label_saldo_empenho']}</div>
@@ -739,7 +750,6 @@ def render_kpi_cards(kpis: dict[str, float | str], deltas: dict | None = None) -
 			<div class="kpi-card">
 				<div class="kpi-label">Média mensal de consumo</div>
 				<div class="kpi-value">{currency(kpis['media_mensal_consumo'])}</div>
-				{_delta_badge('media_mensal_consumo', inverted=True)}
 			</div>
 			<div class="kpi-card">
 				<div class="kpi-label">Meses de Cobertura</div>
@@ -765,7 +775,7 @@ def render_kpi_cards(kpis: dict[str, float | str], deltas: dict | None = None) -
 			<div class="kpi-card">
 				<div class="kpi-label">Nº Abastecimentos</div>
 				<div class="kpi-value">{_fmt_num(kpis['n_abastecimentos'])}</div>
-				{_delta_badge('n_abastecimentos', inverted=False)}
+				{_delta_badge('n_abastecimentos', neutral=True)}
 			</div>
 			<div class="kpi-card">
 				<div class="kpi-label">Veículos Ativos</div>
@@ -850,7 +860,6 @@ def get_discount_rate() -> float:
 	return float(df['desconto_percentual'].iloc[0])
 
 
-@st.cache_data(show_spinner=False)
 def get_financial_params_editor_df() -> pd.DataFrame:
 	"""Carrega todos os parâmetros financeiros anuais para edição na sidebar."""
 	with sqlite3.connect(DB_PATH) as conn:
@@ -1063,7 +1072,6 @@ def render_financial_params_editor_modal() -> None:
 		except Exception as exc:
 			st.error(f"Não foi possível salvar: {exc}")
 		else:
-			get_financial_params_editor_df.clear()
 			get_financial_params_by_years.clear()
 			get_limits_df.clear()
 			get_discount_rate.clear()
@@ -2467,6 +2475,105 @@ def run_dashboard() -> None:
 					else:
 						st.info("ℹ️ Este arquivo já foi importado nesta sessão.")
 
+				st.divider()
+				st.markdown("**🌐 Ou buscar via API**")
+				_col1, _col2 = st.columns(2)
+				with _col1:
+					_early_di = st.date_input("De", value=datetime.date(datetime.date.today().year, 1, 1), format="DD/MM/YYYY", key="api_early_di")
+				with _col2:
+					_early_df = st.date_input("Até", value=datetime.date.today(), format="DD/MM/YYYY", key="api_early_df")
+				if st.button("🌐 Buscar dados da API", key="btn_api_early", use_container_width=True):
+					import json as _json2, urllib.request as _urllib_req2
+					try:
+						_cfg2 = _json2.loads((BASE_DIR / "config.json").read_text(encoding="utf-8"))
+						_api2 = _cfg2.get("api_sisatec", {})
+						_di2 = _early_di.strftime("%m-%d-%Y")
+						_df2 = _early_df.strftime("%m-%d-%Y")
+						_url2 = f"{_api2['base_url']}/{_api2['codigo']}/{_api2['key']}/{_di2}/{_df2}"
+
+						def _fetch_all_pages(base_url):
+							def _get(pg):
+								_u = base_url if pg == 1 else f"{base_url}?pagina={pg}"
+								_req = _urllib_req2.Request(_u, headers={"Accept": "application/json"})
+								with _urllib_req2.urlopen(_req, timeout=30) as _r:
+									return _json2.loads(_r.read().decode("utf-8"))
+							_first = _get(1)
+							if isinstance(_first, list):
+								return _first
+							_d = _first.get("abastecimentos", _first.get("dados", _first.get("data", _first.get("registros", []))))
+							_total = int(_first.get("total_paginas", _first.get("totalPaginas", 1)) or 1)
+							_all = list(_d)
+							for _pg in range(2, _total + 1):
+								_r = _get(_pg)
+								_all.extend(_r.get("abastecimentos", _r.get("dados", _r.get("data", _r.get("registros", [])))))
+							return _all
+
+						def _br_float2(v):
+							if v is None: return None
+							try: return float(str(v).replace(",", "."))
+							except: return None
+
+						def _records_to_df2(records):
+							rows = []
+							for r in records:
+								_data = str(r.get("data", "") or "").strip()
+								_hora = str(r.get("hora", "") or "").strip()
+								try:
+									_data_iso = datetime.datetime.strptime(_data, "%d/%m/%Y").strftime("%Y-%m-%d")
+								except Exception:
+									_data_iso = _data
+								_kma = _br_float2(r.get("kmAtual"))
+								_kman = _br_float2(r.get("kmAnterior"))
+								_krod_api = _br_float2(r.get("KmHoraRodado"))
+								_krod = _krod_api if (_krod_api and _krod_api > 0) else ((_kma - _kman) if (_kma and _kman and _kma > _kman) else None)
+								_lit = _br_float2(r.get("quantidadeLitros"))
+								_kml_api = _br_float2(r.get("KmHoraPorLitro"))
+								_kml = _kml_api if (_kml_api and _kml_api > 0) else ((_krod / _lit) if (_krod and _lit and _lit > 0) else None)
+								_val = _br_float2(r.get("valor"))
+								rows.append({
+									"Data/Hora": f"{_data_iso} {_hora}".strip() if _data_iso else None,
+									"Placa": str(r.get("placa", "") or "").upper().strip(),
+									"Condutor": str(r.get("condutor", "") or "").strip(),
+									"Marca": str(r.get("marca", "") or "").strip(),
+									"Modelo": str(r.get("modelo", "") or "").strip(),
+									"Ano": str(r.get("ano_veiculo", "") or "").strip(),
+									"Ult. km": _kman, "km Atual": _kma, "km/L": _kml, "Km Rodado": _krod,
+									"Qtde (L)": _lit, "Vr. Unit.": _br_float2(r.get("valorLitro")),
+									"Valor": _val,
+									"Produto": str(r.get("nomeServico", "") or r.get("combustivel", "") or "").strip(),
+									"Unidade": str(r.get("centroDeCustoVeiculo", "") or "").strip(),
+									"Estabelecimento": str(r.get("posto", "") or "").strip(),
+									"Registro": str(r.get("registroCondutor", "") or "").strip(),
+									"Prefixo": str(r.get("prefixo", "") or "").strip(),
+									"Tipo Frota": str(r.get("TipoFrota", "") or "").strip(),
+									"R$/km": (_val / _krod if (_val and _krod and _krod > 0) else None),
+								})
+							return pd.DataFrame(rows)
+
+						with st.spinner("Consultando API..."):
+							_todos2 = _fetch_all_pages(_url2)
+						if not _todos2:
+							st.info("ℹ️ Nenhum registro encontrado no período.")
+						else:
+							with st.spinner(f"Importando {len(_todos2)} registros..."):
+								_df_api2 = _records_to_df2(_todos2)
+								with sqlite3.connect(str(DB_PATH)) as _conn2:
+									try:
+										_df_ex2 = pd.read_sql_query('SELECT * FROM "abastecimentos"', _conn2)
+									except Exception:
+										_df_ex2 = pd.DataFrame()
+									_df_mg2 = pd.concat([_df_ex2, _df_api2], ignore_index=True).drop_duplicates(
+										subset=["Data/Hora", "Placa", "Qtde (L)", "Valor"], keep="first"
+									)
+									_df_mg2.to_sql("abastecimentos", _conn2, if_exists="replace", index=False)
+								st.session_state["db_version"] = st.session_state.get("db_version", 0) + 1
+								get_real_df.clear()
+								st.success(f"✅ {len(_todos2)} registros importados via API! Recarregando...")
+								st.rerun()
+					except Exception as _e2:
+						import traceback as _tb2
+						st.error(f"❌ Erro na API: {_e2}\n\n```\n{_tb2.format_exc()}\n```")
+
 	try:
 		df_real = apply_discount(get_real_df(st.session_state["db_version"]), discount_rate)
 	except RuntimeError as _e:
@@ -2518,8 +2625,6 @@ def run_dashboard() -> None:
 					if k in st.session_state:
 						del st.session_state[k]
 				st.rerun()
-
-		render_financial_params_editor_sidebar()
 
 		# ── Alertas (computados com escopo do ano corrente, todas secretarias) ──
 		_ano_ini = datetime.date(datetime.date.today().year, 1, 1)
@@ -2692,6 +2797,141 @@ def run_dashboard() -> None:
 
 			st.divider()
 
+			# ── Atualizar via API ──
+			st.markdown("**🌐 Atualizar via API**")
+			# Usar o timestamp completo (não só a data) para não perder registros do mesmo dia
+			_api_ultimo_ts = df_real["data_hora"].max() if ("data_hora" in df_real.columns and not df_real.empty) else None
+			if pd.isna(_api_ultimo_ts) if _api_ultimo_ts is not None else True:
+				_api_ultimo_ts = None
+			if _api_ultimo_ts is not None:
+				_api_hoje = datetime.date.today()
+				# dataInicio = mesmo dia do último registro (pega registros posteriores do mesmo dia)
+				_api_di_date = _api_ultimo_ts.date()
+				_api_ultimo_str = _api_ultimo_ts.strftime("%d/%m/%Y %H:%M")
+				st.caption(f"Última atualização: **{_api_ultimo_str}**")
+				st.caption(
+					f"Buscando registros após **{_api_ultimo_str}** até **{_api_hoje.strftime('%d/%m/%Y')}**"
+				)
+				if st.button("🌐 Buscar dados da API", key="btn_api_update", use_container_width=True):
+					import json as _json, urllib.request as _urllib_req
+					try:
+						_cfg = _json.loads((BASE_DIR / "config.json").read_text(encoding="utf-8"))
+						_api_cfg = _cfg.get("api_sisatec", {})
+						_codigo = _api_cfg.get("codigo", "")
+						_key = _api_cfg.get("key", "")
+						_base_url = _api_cfg.get("base_url", "")
+						_di = _api_di_date.strftime("%m-%d-%Y")
+						_df_str = _api_hoje.strftime("%m-%d-%Y")
+
+						def _buscar_pagina(pagina: int) -> dict:
+							_url = f"{_base_url}/{_codigo}/{_key}/{_di}/{_df_str}?pagina={pagina}"
+							_req = _urllib_req.Request(_url, headers={"Accept": "application/json"})
+							with _urllib_req.urlopen(_req, timeout=30) as _resp:
+								return _json.loads(_resp.read().decode("utf-8"))
+
+						def _br_float(v):
+							if v is None:
+								return None
+							try:
+								return float(str(v).replace(",", "."))
+							except Exception:
+								return None
+
+						def _api_records_to_df(records: list) -> pd.DataFrame:
+							rows = []
+							for r in records:
+								_data = str(r.get("data", "") or "").strip()
+								_hora = str(r.get("hora", "") or "").strip()
+								# Converter DD/MM/YYYY → YYYY-MM-DD para manter formato ISO uniforme no banco
+								try:
+									_data_iso = datetime.datetime.strptime(_data, "%d/%m/%Y").strftime("%Y-%m-%d")
+								except Exception:
+									_data_iso = _data
+								_dt = f"{_data_iso} {_hora}".strip() if _data_iso else None
+								_km_atual = _br_float(r.get("kmAtual"))
+								_km_ant = _br_float(r.get("kmAnterior"))
+								_km_rod_api = _br_float(r.get("KmHoraRodado"))
+								_km_rod = _km_rod_api if (_km_rod_api and _km_rod_api > 0) else (
+									(_km_atual - _km_ant) if (_km_atual and _km_ant and _km_atual > _km_ant) else None
+								)
+								_kml_api = _br_float(r.get("KmHoraPorLitro"))
+								_litros = _br_float(r.get("quantidadeLitros"))
+								_kml = _kml_api if (_kml_api and _kml_api > 0) else (
+									(_km_rod / _litros) if (_km_rod and _litros and _litros > 0) else None
+								)
+								rows.append({
+									"Data/Hora":           _dt,
+									"Placa":               str(r.get("placa", "") or "").upper().strip(),
+									"Condutor":            str(r.get("condutor", "") or "").strip(),
+									"Marca":               str(r.get("marca", "") or "").strip(),
+									"Modelo":              str(r.get("modelo", "") or "").strip(),
+									"Ano":                 str(r.get("ano_veiculo", "") or "").strip(),
+									"Ult. km":             _km_ant,
+									"km Atual":            _km_atual,
+									"km/L":                _kml,
+									"Km Rodado":           _km_rod,
+									"Qtde (L)":            _litros,
+									"Vr. Unit.":           _br_float(r.get("valorLitro")),
+									"Valor":               _br_float(r.get("valor")),
+									"Produto":             str(r.get("nomeServico", "") or r.get("combustivel", "") or "").strip(),
+									"Unidade":             str(r.get("centroDeCustoVeiculo", "") or "").strip(),
+									"Estabelecimento":     str(r.get("posto", "") or "").strip(),
+									"Registro":            str(r.get("registroCondutor", "") or "").strip(),
+									"Prefixo":             str(r.get("prefixo", "") or "").strip(),
+									"Tipo Frota":          str(r.get("TipoFrota", "") or "").strip(),
+									"R$/km":               ((_br_float(r.get("valor")) / _km_rod) if (_br_float(r.get("valor")) and _km_rod and _km_rod > 0) else None),
+								})
+							return pd.DataFrame(rows)
+
+						with st.spinner("Consultando API..."):
+							_primeira = _buscar_pagina(1)
+							if isinstance(_primeira, list):
+								_todos = _primeira
+							else:
+								_dados = _primeira.get("abastecimentos", _primeira.get("dados", _primeira.get("data", _primeira.get("registros", []))))
+								_total_pag = int(_primeira.get("total_paginas", _primeira.get("totalPaginas", 1)) or 1)
+								_todos = list(_dados)
+								for _pag in range(2, _total_pag + 1):
+									_resp_pag = _buscar_pagina(_pag)
+									_d = _resp_pag.get("abastecimentos", _resp_pag.get("dados", _resp_pag.get("data", _resp_pag.get("registros", []))))
+									_todos.extend(_d)
+
+						if not _todos:
+							st.info("ℹ️ Nenhum registro novo encontrado no período.")
+						else:
+							with st.spinner(f"Importando {len(_todos)} registros..."):
+								_df_api = _api_records_to_df(_todos)
+								# Filtrar apenas registros com timestamp POSTERIOR ao último já existente
+								# A API retorna o dia inteiro de _api_di_date, então descartamos duplicatas de horário
+								_df_api["_dt_parsed"] = pd.to_datetime(
+									_df_api["Data/Hora"], dayfirst=True, errors="coerce"
+								)
+								_df_api = _df_api[_df_api["_dt_parsed"] > _api_ultimo_ts].drop(columns=["_dt_parsed"])
+								if _df_api.empty:
+									st.info("ℹ️ Nenhum registro novo após o último horário importado.")
+								else:
+									with sqlite3.connect(str(DB_PATH)) as _conn_api:
+										try:
+											_df_exist = pd.read_sql_query('SELECT * FROM "abastecimentos"', _conn_api)
+										except Exception:
+											_df_exist = pd.DataFrame()
+										_df_merged = pd.concat([_df_exist, _df_api], ignore_index=True).drop_duplicates(
+											subset=["Data/Hora", "Placa", "Qtde (L)", "Valor"],
+											keep="first",
+										)
+										_df_merged.to_sql("abastecimentos", _conn_api, if_exists="replace", index=False)
+									st.session_state["db_version"] = st.session_state.get("db_version", 0) + 1
+									get_real_df.clear()
+									st.success(f"✅ {len(_df_api)} registros novos importados via API! Recarregando...")
+									st.rerun()
+					except Exception as _e_api:
+						import traceback as _tb_api
+						st.error(f"❌ Erro na API: {_e_api}\n\n```\n{_tb_api.format_exc()}\n```")
+			else:
+				st.caption("Sem dados no banco para determinar o período. Importe um Excel primeiro.")
+
+		render_financial_params_editor_sidebar()
+
 		# ── Rodapé ──
 		ultima_atualizacao = data_max.strftime("%d/%m/%Y") if (data_max and isinstance(data_max, datetime.date)) else "—"
 		st.markdown(
@@ -2838,10 +3078,6 @@ def run_dashboard() -> None:
 		st.plotly_chart(
 			make_line_custo_medio_mes_combustivel(filtered),
 			use_container_width=True, key="line_custo_medio",
-		)
-		st.plotly_chart(
-			make_bar_litros_vs_limite_secretaria(filtered, df_limits),
-			use_container_width=True, key="bar_litros_limite_sec",
 		)
 
 
