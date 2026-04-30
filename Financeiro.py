@@ -2466,7 +2466,7 @@ def run_dashboard() -> None:
 								_imported_ids.add(_file_id)
 								st.session_state["_imported_ids"] = _imported_ids
 								st.session_state["db_version"] = st.session_state.get("db_version", 0) + 1
-								get_real_df.clear()
+								st.cache_data.clear()
 								st.success(f"✅ {_up.name} importado com sucesso! Recarregando...")
 								st.rerun()
 							except Exception as _e:
@@ -2567,7 +2567,7 @@ def run_dashboard() -> None:
 									)
 									_df_mg2.to_sql("abastecimentos", _conn2, if_exists="replace", index=False)
 								st.session_state["db_version"] = st.session_state.get("db_version", 0) + 1
-								get_real_df.clear()
+								st.cache_data.clear()
 								st.success(f"✅ {len(_todos2)} registros importados via API! Recarregando...")
 								st.rerun()
 					except Exception as _e2:
@@ -2781,7 +2781,7 @@ def run_dashboard() -> None:
 							_imported_ids.add(_file_id)
 							st.session_state["_imported_ids"] = _imported_ids
 							st.session_state["db_version"] = st.session_state.get("db_version", 0) + 1
-							get_real_df.clear()  # força releitura do banco mesmo se db_version resetar
+							st.cache_data.clear()  # força releitura do banco mesmo se db_version resetar
 							for _k in ("sel_ano", "sel_mes", "sel_sec", "sel_comb"):
 								st.session_state.pop(_k, None)
 							st.success(f"✅ {uploaded.name} importado com sucesso! Recarregando...")
@@ -2904,8 +2904,8 @@ def run_dashboard() -> None:
 								# Filtrar apenas registros com timestamp POSTERIOR ao último já existente
 								# A API retorna o dia inteiro de _api_di_date, então descartamos duplicatas de horário
 								_df_api["_dt_parsed"] = pd.to_datetime(
-									_df_api["Data/Hora"], dayfirst=True, errors="coerce"
-								)
+									_df_api["Data/Hora"], format="%Y-%m-%d %H:%M:%S", errors="coerce"
+								).fillna(pd.to_datetime(_df_api["Data/Hora"], format="%Y-%m-%d %H:%M", errors="coerce"))
 								_df_api = _df_api[_df_api["_dt_parsed"] > _api_ultimo_ts].drop(columns=["_dt_parsed"])
 								if _df_api.empty:
 									st.info("ℹ️ Nenhum registro novo após o último horário importado.")
@@ -2921,7 +2921,7 @@ def run_dashboard() -> None:
 										)
 										_df_merged.to_sql("abastecimentos", _conn_api, if_exists="replace", index=False)
 									st.session_state["db_version"] = st.session_state.get("db_version", 0) + 1
-									get_real_df.clear()
+									st.cache_data.clear()
 									st.success(f"✅ {len(_df_api)} registros novos importados via API! Recarregando...")
 									st.rerun()
 					except Exception as _e_api:
