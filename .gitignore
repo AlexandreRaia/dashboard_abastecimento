@@ -14,8 +14,13 @@ env/
 # Streamlit
 .streamlit/secrets.toml
 
+# Environment secrets (NUNCA versionar)
+.env
+
 # Databases
 *.db
+*.sqlite
+*.sqlite3
 
 # OS
 .DS_Store

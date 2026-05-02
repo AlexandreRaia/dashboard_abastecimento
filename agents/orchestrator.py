@@ -24,7 +24,6 @@ from .ingestion import AgentIngestion
 from .notification import AgentNotificacao
 from .report import AgentRelatorio
 from .rules import AgentRegras
-from .storage import AgentStorageSQLite
 from .validation import AgentValidacao
 
 
@@ -38,7 +37,6 @@ _historico      = AgentHistorico()
 _classificacao  = AgentClassificacao()
 _relatorio_agent = AgentRelatorio()
 _notificacao    = AgentNotificacao()
-_storage        = AgentStorageSQLite()
 
 
 # ---------------------------------------------------------------------------
@@ -96,13 +94,6 @@ class OrchestradorAuditoria:
                     lambda v: v if isinstance(v, bool) else str(v).strip().lower() == 'true'
                 ).astype(bool)
                 df_valido.loc[_mask_alto, '_erro_km'] = True
-            sqlite_info = {
-                'status': 'NAO_APLICAVEL',
-                'rows_written': 0,
-                'rows_loaded': int(len(df_valido)),
-                'db_path': self.metadata.get('db_path', ''),
-                'table_name': self.metadata.get('db_table', ''),
-            }
         else:
             # ── Agente 1: Ingestão ──────────────────────────────────────────
             log.append("▶ Agente 1 | Ingestao e Padronizacao")
@@ -118,22 +109,6 @@ class OrchestradorAuditoria:
             rel_qualidade += falhas
             log.append(f"  ✔ {linhas_apos_validacao} registros aptos para auditoria (removidos: {descartados_validacao}).")
 
-            # ── Persistência SQLite: base validada ─────────────────────────
-            db_path = self.metadata.get('db_path', 'auditoria_frota.db')
-            db_table = self.metadata.get('db_table', 'abastecimentos_validados')
-            log.append("▶ Agente 2.5 | Persistencia SQLite")
-            df_valido_db, sqlite_info = _storage.salvar_e_recarregar(
-                df_valido,
-                db_path=db_path,
-                table_name=db_table,
-            )
-            df_valido = df_valido_db
-            log.append(
-                f"  ✔ SQLite OK | tabela={sqlite_info.get('table_name')} | "
-                f"gravados={sqlite_info.get('rows_written', 0)} | "
-                f"carregados={sqlite_info.get('rows_loaded', 0)}"
-            )
-
         if df_valido.empty:
             log.append("  ✘ Nenhum registro valido. Pipeline encerrado.")
             return {
@@ -144,7 +119,6 @@ class OrchestradorAuditoria:
                 'relatorio':         {},
                 'notificacoes':      [],
                 'relatorio_obj':     _relatorio_agent,
-                'sqlite':            sqlite_info,
             }
 
         # ── Agente 3: Regras operacionais ───────────────────────────────
@@ -153,11 +127,11 @@ class OrchestradorAuditoria:
         _df_hist_completo = self.metadata.get('df_historico_completo')
         _df_hist_modelo = None
         if _df_hist_completo is not None and not _df_hist_completo.empty:
-            from .config import COLUMN_MAP, THRESHOLDS
+            from .config import THRESHOLDS
             import pandas as _pd
-            _df_h = _df_hist_completo.rename(
-                columns={col: interno for col, interno in COLUMN_MAP.items() if col in _df_hist_completo.columns}
-            ).copy()
+            # df_historico_completo vem do repositório (nomes já normalizados:
+            # km_rodado, litros, modelo, data_hora, placa) — sem rename necessário.
+            _df_h = _df_hist_completo.copy()
             if 'data_hora' in _df_h.columns:
                 _df_h['data_hora'] = _pd.to_datetime(_df_h['data_hora'], errors='coerce')
                 _data_max = _df_h['data_hora'].max()
@@ -181,14 +155,13 @@ class OrchestradorAuditoria:
         log.append("▶ Agente 4 | Contexto Historico")
         df_historico_completo = self.metadata.get('df_historico_completo')
         
-        # Normalizar nomes de colunas se df_historico_completo nao foi processado por ingestion
-        if df_historico_completo is not None and not df_historico_completo.empty:
-            from .config import COLUMN_MAP
-            renomear_map = {col: interno for col, interno in COLUMN_MAP.items() if col in df_historico_completo.columns}
-            df_historico_completo = df_historico_completo.rename(columns=renomear_map)
-        
+        # df_historico_completo vem do repositório com colunas já normalizadas
+        # (placa, litros, km_rodado, data_hora, consumo…) — AgentHistorico usa
+        # esses mesmos nomes internamente, sem necessidade de rename.
         df_enr, ocs = _historico.processar(df_valido, ocs, df_historico=df_historico_completo)
-        log.append(f"  ✔ {len(ocs)} ocorrencia(s) apos enriquecimento historico.")
+        # R11 executado aqui — df_enr já tem coluna 'contagem' populada pelo AgentHistorico
+        ocs += _regras._r11_historico_insuficiente(df_enr)
+        log.append(f"  ✔ {len(ocs)} ocorrencia(s) apos enriquecimento historico (incl. R11).")
 
         # ── Agente 5: Classificação ─────────────────────────────────────
         log.append("▶ Agente 5 | Classificacao e Priorizacao")
@@ -210,56 +183,36 @@ class OrchestradorAuditoria:
         notifs = _notificacao.processar(ocs_class)
         log.append(f"  ✔ {len(notifs)} notificacao(es) gerada(s).")
 
-        return {
-            'log':               log,
-            'df_auditado':       df_enr,
-            'relatorio_qualidade': rel_qualidade,
-            'ocorrencias':       ocs_class,
-            'relatorio':         relatorio,
-            'notificacoes':      notifs,
-            'relatorio_obj':     _relatorio_agent,
-            'sqlite':            sqlite_info,
+        # Economia estimada: soma do valor_total dos abastecimentos com ao menos uma ocorrência ALTA.
+        # Usa (placa, Timestamp normalizado) para evitar mismatch de representação de string.
+        _ts_norm = lambda v: pd.Timestamp(v).floor('min') if pd.notna(v) else pd.NaT  # noqa: E731
+        _altas_keys = {
+            (str(o.get('placa', '')), _ts_norm(o.get('data_hora')))
+            for o in ocs_class
+            if o.get('gravidade_final') == 'ALTA' and pd.notna(o.get('data_hora'))
         }
-
-    def atualizar_base_diaria(self, df_raw: pd.DataFrame) -> dict:
-        """
-        Ingestao/validacao da planilha do dia e append deduplicado no SQLite historico.
-        """
-        log = []
-        log.append("▶ Carga diaria | Ingestao e Padronizacao")
-        df_pad, rel_qualidade = _ingestion.processar(df_raw)
-        log.append(f"  ✔ {len(df_pad)} registro(s) padronizado(s).")
-
-        log.append("▶ Carga diaria | Validacao")
-        df_valido, falhas = _validacao.processar(df_pad)
-        rel_qualidade += falhas
-        log.append(f"  ✔ {len(df_valido)} registro(s) valido(s).")
-
-        db_path = self.metadata.get('db_path', 'auditoria_frota.db')
-        db_table_hist = self.metadata.get('db_table_historico', 'abastecimentos_historico')
-        log.append("▶ Carga diaria | Persistencia historica (SQLite)")
-        df_hist, sqlite_info = _storage.append_historico(
-            df_valido,
-            db_path=db_path,
-            table_name=db_table_hist,
-        )
-        log.append(
-            f"  ✔ Historico atualizado | inseridos={sqlite_info.get('rows_inserted', 0)} | "
-            f"total={sqlite_info.get('rows_loaded', 0)}"
-        )
+        economia_estimada = 0.0
+        if _altas_keys and 'valor_total' in df_enr.columns:
+            _ts_col = pd.to_datetime(df_enr['data_hora'], errors='coerce').dt.floor('min')
+            _mask_alta = [
+                (str(pl), ts) in _altas_keys
+                for pl, ts in zip(df_enr['placa'].fillna('').astype(str), _ts_col)
+            ]
+            economia_estimada = float(
+                pd.to_numeric(df_enr.loc[_mask_alta, 'valor_total'], errors='coerce')
+                .fillna(0.0).sum()
+            )
 
         return {
-            'log': log,
+            'log':                log,
+            'df_auditado':        df_enr,
             'relatorio_qualidade': rel_qualidade,
-            'sqlite': sqlite_info,
-            'df_historico': df_hist,
+            'ocorrencias':        ocs_class,
+            'relatorio':          relatorio,
+            'notificacoes':       notifs,
+            'relatorio_obj':      _relatorio_agent,
+            'economia_estimada':  economia_estimada,
         }
-
-    def carregar_base_historica(self) -> tuple:
-        """Carrega base historica validada a partir do SQLite."""
-        db_path = self.metadata.get('db_path', 'auditoria_frota.db')
-        db_table_hist = self.metadata.get('db_table_historico', 'abastecimentos_historico')
-        return _storage.carregar_tabela(db_path=db_path, table_name=db_table_hist)
 
     def gerar_excel(self, resultado: dict) -> bytes:
         """Atalho para gerar o Excel a partir do resultado do pipeline."""

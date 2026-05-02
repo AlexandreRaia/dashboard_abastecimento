@@ -1,0 +1,1295 @@
+<!DOCTYPE html>
+
+<html lang="pt-BR">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Manual Operacional - Auditor de Abastecimento</title>
+
+</head>
+
+
+
+<style>
+
+*{box-sizing:border-box;margin:0;padding:0}
+
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;line-height:1.6;color:#1e293b;background:#f8fafc;padding:0}
+
+.manual{max-width:860px;margin:0 auto;padding:20px 16px 40px}
+
+.manual-header{background:linear-gradient(135deg,#1e3a8a 0%,#1e40af 60%,#2563eb 100%);color:white;border-radius:16px;padding:32px 32px 28px;margin-bottom:24px;text-align:center}
+
+.manual-header h1{font-size:22px;font-weight:700;margin-bottom:6px}
+
+.manual-header p{font-size:14px;opacity:.85}
+
+.manual-header .badge{display:inline-block;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);border-radius:20px;padding:3px 12px;font-size:12px;margin-top:10px}
+
+.toc{background:white;border:1px solid #e2e8f0;border-radius:12px;padding:20px 24px;margin-bottom:24px}
+
+.toc h3{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#64748b;margin-bottom:12px}
+
+.toc ol{list-style:none;display:grid;grid-template-columns:1fr 1fr;gap:6px}
+
+.toc ol li a{text-decoration:none;color:#1e40af;font-size:13px;font-weight:500}
+
+.toc ol li a:hover{text-decoration:underline}
+
+.section{background:white;border:1px solid #e2e8f0;border-radius:14px;padding:26px 28px;margin-bottom:20px;box-shadow:0 1px 4px rgba(0,0,0,.04)}
+
+.section-title{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+
+.section-num{min-width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:white}
+
+.section-title h2{font-size:17px;font-weight:700;color:#0f172a}
+
+.section-title .icon{font-size:20px}
+
+.c-blue{background:#1e40af}.c-sky{background:#0284c7}.c-purple{background:#7c3aed}.c-red{background:#dc2626}.c-indigo{background:#4f46e5}.c-orange{background:#d97706}.c-green{background:#16a34a}.c-yellow{background:#ca8a04}.c-teal{background:#0d9488}.c-slate{background:#475569}
+
+.formula-box{background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #1e40af;border-radius:8px;padding:14px 18px;font-family:'Courier New',Courier,monospace;font-size:14px;color:#1e3a8a;margin:12px 0;line-height:1.8}
+
+.formula-label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#3b82f6;font-weight:600;margin-bottom:4px;font-family:-apple-system,sans-serif}
+
+.example{border-radius:8px;padding:12px 16px;margin:10px 0;font-size:13px}
+
+.example-normal{background:#f0fdf4;border-left:4px solid #16a34a}
+
+.example-alert{background:#fff7ed;border-left:4px solid #d97706}
+
+.example-critical{background:#fef2f2;border-left:4px solid #dc2626}
+
+.example-info{background:#f0f9ff;border-left:4px solid #0284c7}
+
+.example strong{display:block;font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px}
+
+.rules-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-top:8px}
+
+.rule-card{border:1px solid #e2e8f0;border-radius:10px;padding:14px;position:relative;overflow:hidden}
+
+.rule-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
+
+.rule-card.alta::before{background:#dc2626}.rule-card.media::before{background:#d97706}.rule-card.baixa::before{background:#16a34a}
+
+.rule-code{font-family:'Courier New',monospace;font-size:12px;font-weight:700;color:#475569;background:#f1f5f9;border-radius:4px;padding:2px 6px;display:inline-block;margin-bottom:6px}
+
+.rule-title{font-size:13px;font-weight:600;color:#0f172a;margin-bottom:4px}
+
+.rule-desc{font-size:12px;color:#64748b;line-height:1.5}
+
+.rule-example{font-size:11px;color:#94a3b8;margin-top:6px;padding-top:6px;border-top:1px solid #f1f5f9}
+
+.badge-grav{font-size:10px;font-weight:600;padding:1px 6px;border-radius:10px;float:right}
+
+.badge-alta{background:#fee2e2;color:#991b1b}.badge-media{background:#fef3c7;color:#92400e}.badge-baixa{background:#dcfce7;color:#166534}
+
+.agent-pipeline{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:16px 0}
+
+.agent-step{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;color:#1e40af;white-space:nowrap}
+
+.agent-arrow{color:#94a3b8;font-size:16px}
+
+.agent-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-top:14px}
+
+.agent-card{border:1px solid #e2e8f0;border-radius:10px;padding:14px;background:#fafafa}
+
+.agent-card .agent-icon{font-size:22px;margin-bottom:6px}
+
+.agent-card .agent-name{font-size:12px;font-weight:700;color:#1e40af;margin-bottom:4px;font-family:'Courier New',monospace}
+
+.agent-card .agent-role{font-size:13px;font-weight:600;color:#0f172a;margin-bottom:6px}
+
+.agent-card ul{list-style:none}
+
+.agent-card ul li{font-size:12px;color:#64748b;padding:2px 0}
+
+.agent-card ul li::before{content:'→ ';color:#3b82f6}
+
+.grav-table{width:100%;border-collapse:collapse;margin-top:12px;font-size:13px}
+
+.grav-table th{background:#f1f5f9;padding:8px 12px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#64748b;border-bottom:2px solid #e2e8f0}
+
+.grav-table td{padding:9px 12px;border-bottom:1px solid #f1f5f9;vertical-align:top}
+
+.grav-table tr:last-child td{border-bottom:none}
+
+.chip-alta{background:#fee2e2;color:#991b1b;border-radius:4px;padding:2px 8px;font-weight:600;font-size:12px}
+
+.chip-media{background:#fef3c7;color:#92400e;border-radius:4px;padding:2px 8px;font-weight:600;font-size:12px}
+
+.chip-baixa{background:#dcfce7;color:#166534;border-radius:4px;padding:2px 8px;font-weight:600;font-size:12px}
+
+.checklist{list-style:none}
+
+.checklist li{padding:8px 0 8px 28px;position:relative;border-bottom:1px solid #f1f5f9;font-size:13px;color:#334155}
+
+.checklist li:last-child{border-bottom:none}
+
+.checklist li::before{content:'✓';position:absolute;left:0;color:#16a34a;font-weight:700}
+
+.checklist.dont li::before{content:'✗';color:#dc2626}
+
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px}
+
+@media(max-width:560px){.two-col{grid-template-columns:1fr}}
+
+.flow-list{counter-reset:flow-counter;list-style:none;padding:0}
+
+.flow-list li{counter-increment:flow-counter;display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:13px;color:#334155}
+
+.flow-list li:last-child{border-bottom:none}
+
+.flow-list li::before{content:counter(flow-counter);background:#1e40af;color:white;min-width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;margin-top:1px}
+
+.exercise{border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin:10px 0}
+
+.ex-header{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+
+.ex-num{background:#0d9488;color:white;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
+
+.ex-title{font-size:13px;font-weight:600;color:#0f172a}
+
+.ex-data{display:flex;gap:16px;flex-wrap:wrap;margin:8px 0}
+
+.ex-data-item .label{color:#94a3b8;font-size:11px;text-transform:uppercase;letter-spacing:.04em;display:block}
+
+.ex-data-item .value{font-weight:600;color:#0f172a;font-size:15px}
+
+.ex-result{border-radius:6px;padding:8px 12px;font-size:13px;font-weight:500;margin-top:8px}
+
+.ex-ok{background:#f0fdf4;color:#166534;border:1px solid #bbf7d0}
+
+.ex-nok{background:#fef2f2;color:#991b1b;border:1px solid #fecaca}
+
+.quote{background:linear-gradient(135deg,#f0f9ff 0%,#eff6ff 100%);border-left:4px solid #1e40af;border-radius:0 10px 10px 0;padding:16px 20px;font-size:15px;font-style:italic;color:#1e3a8a;margin:14px 0;line-height:1.7}
+
+.subsection{margin:16px 0}
+
+.subsection h3{font-size:14px;font-weight:600;color:#334155;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+
+p{margin:8px 0;color:#334155;font-size:13px;line-height:1.65}
+
+strong{color:#0f172a}
+
+ul.default{padding-left:20px}
+
+ul.default li{font-size:13px;color:#334155;padding:3px 0;line-height:1.5}
+
+.info-box{background:#fafafa;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;font-size:13px;color:#334155;margin:8px 0}
+
+.compare{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:10px 0}
+
+@media(max-width:480px){.compare{grid-template-columns:1fr}}
+
+.compare-col{border-radius:8px;padding:14px}
+
+.before{background:#fef2f2;border:1px solid #fecaca}
+
+.after{background:#f0fdf4;border:1px solid #bbf7d0}
+
+.compare-col h4{font-size:12px;text-transform:uppercase;letter-spacing:.05em;font-weight:700;margin-bottom:8px}
+
+.before h4{color:#991b1b}.after h4{color:#166534}
+
+.compare-col ul{list-style:none}
+
+.compare-col ul li{font-size:12px;padding:3px 0;color:#334155}
+
+.before ul li::before{content:'✗ ';color:#dc2626}
+
+.after ul li::before{content:'✓ ';color:#16a34a}
+
+</style></head><body><div class="manual">
+
+
+
+<div class="manual-header">
+
+    <div style="font-size:32px;margin-bottom:10px">📘</div>
+
+    <h1>Manual Operacional e de Treinamento</h1>
+
+    <p>Sistema de Auditoria de Abastecimento de Frota Municipal</p>
+
+    <span class="badge">Versão consolidada · Santana de Parnaíba · 2026</span>
+
+</div>
+
+
+
+<div class="toc">
+
+    <h3>Índice</h3>
+
+    <ol>
+
+        <li><a href="#s1">1. Objetivo do Sistema</a></li>
+
+        <li><a href="#s2">2. Como o Sistema Funciona</a></li>
+
+        <li><a href="#s3">3. Fundamentos Estatísticos</a></li>
+
+        <li><a href="#s4">4. Regras de Auditoria (R00–R11)</a></li>
+
+        <li><a href="#s5">5. Arquitetura de Agentes de IA</a></li>
+
+        <li><a href="#s6">6. Classificação de Gravidade</a></li>
+
+        <li><a href="#s7">7. Ação da Equipe</a></li>
+
+        <li><a href="#s8">8. Limites do Sistema</a></li>
+
+        <li><a href="#s9">9. Treinamento Prático</a></li>
+
+        <li><a href="#s10">10. Mentalidade Final</a></li>
+
+    </ol>
+
+</div>
+
+
+
+<!-- SEÇÃO 1 -->
+
+<div class="section" id="s1">
+
+    <div class="section-title">
+
+        <div class="section-num c-blue">1</div>
+
+        <span class="icon">🎯</span>
+
+        <h2>Objetivo do Sistema</h2>
+
+    </div>
+
+    <p>O sistema realiza <strong>auditoria técnica automatizada</strong> dos registros de abastecimento da frota municipal, identificando inconsistências com base em evidências numéricas.</p>
+
+    <p>A análise combina quatro pilares:</p>
+
+    <ol class="flow-list" style="margin-top:10px">
+
+        <li>Regras objetivas (R00 a R11) — critérios técnicos fixos e documentados</li>
+
+        <li>Estatística (média e desvio padrão) — comportamento esperado por veículo</li>
+
+        <li>Histórico individual por veículo — comparação com o padrão próprio de cada placa</li>
+
+        <li>Evidência numérica — toda ocorrência tem base em dados verificáveis</li>
+
+    </ol>
+
+    <div class="quote" style="margin-top:16px">💡 &ldquo;Toda ocorrência precisa de justificativa baseada em números, não em opinião.&rdquo;</div>
+
+</div>
+
+
+
+<!-- SEÇÃO 2 -->
+
+<div class="section" id="s2">
+
+    <div class="section-title">
+
+        <div class="section-num c-sky">2</div>
+
+        <span class="icon">🔄</span>
+
+        <h2>Como o Sistema Funciona</h2>
+
+    </div>
+
+    <p>O processamento segue um fluxo sequencial de agentes especializados, do dado bruto até a notificação administrativa:</p>
+
+    <ol class="flow-list" style="margin-top:12px">
+
+        <li>Leitura e padronização da planilha de abastecimento</li>
+
+        <li>Limpeza e validação dos dados (remoção de inconsistências óbvias)</li>
+
+        <li>Aplicação das regras de auditoria (R00–R11)</li>
+
+        <li>Comparação com o histórico individual de cada veículo (R09, R10, R11)</li>
+
+        <li>Classificação de gravidade das ocorrências (ALTA / MÉDIA / BAIXA)</li>
+
+        <li>Geração do relatório técnico consolidado</li>
+
+        <li>Geração automática das minutas de notificação administrativa</li>
+
+    </ol>
+
+    <div class="example example-info" style="margin-top:14px">
+
+        <strong>Tradução simples para a equipe</strong>
+
+        👉 O sistema funciona como um <em>auditor automático baseado em dados</em>: não opina, não acusa — apenas aponta onde os números não fazem sentido.
+
+    </div>
+
+</div>
+
+
+
+<!-- SEÇÃO 3 -->
+
+<div class="section" id="s3">
+
+    <div class="section-title">
+
+        <div class="section-num c-purple">3</div>
+
+        <span class="icon">📊</span>
+
+        <h2>Fundamentos Estatísticos</h2>
+
+    </div>
+
+
+
+    <div class="subsection">
+
+        <h3>🧠 3.1 Consumo (km/L)</h3>
+
+        <p>O consumo é a métrica principal de eficiência do veículo. É calculado dividindo-se a distância percorrida pelo volume de combustível abastecido.</p>
+
+        <div class="formula-label">Fórmula</div>
+
+        <div class="formula-box">consumo = km_rodado ÷ litros</div>
+
+        <div class="two-col">
+
+            <div class="example example-normal">
+
+                <strong>Exemplo normal</strong>
+
+                KM rodado: 100 &nbsp;|&nbsp; Litros: 10<br>
+
+                <span style="font-weight:700">Consumo = 10 km/L ✅</span>
+
+            </div>
+
+            <div class="example example-critical">
+
+                <strong>Exemplo crítico</strong>
+
+                KM rodado: 100 &nbsp;|&nbsp; Litros: 20<br>
+
+                <span style="font-weight:700">Consumo = 5 km/L 🚨 Muito baixo</span>
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+
+    <div class="subsection">
+
+        <h3>📊 3.2 Média (μ)</h3>
+
+        <p>A média aritmética representa o consumo <strong>típico</strong> de um veículo ao longo de seu histórico de abastecimentos. É usada como referência central para identificar desvios.</p>
+
+        <div class="formula-label">Fórmula</div>
+
+        <div class="formula-box">μ = (x₁ + x₂ + ... + xₙ) ÷ n</div>
+
+        <div class="example example-info">
+
+            <strong>Exemplo</strong>
+
+            Consumos históricos: 10, 11, 9 km/L<br>
+
+            μ = (10 + 11 + 9) ÷ 3 = <strong>10 km/L</strong><br>
+
+            <span style="color:#64748b">→ Esse é o comportamento normal esperado para esse veículo.</span>
+
+        </div>
+
+    </div>
+
+
+
+    <div class="subsection">
+
+        <h3>📉 3.3 Desvio Percentual</h3>
+
+        <p>Mede quanto o consumo atual se afastou da média histórica, expresso em porcentagem. É o indicador mais <strong>intuitivo</strong> para a equipe de fiscalização.</p>
+
+        <div class="formula-label">Fórmula</div>
+
+        <div class="formula-box">desvio% = ((x − μ) ÷ μ) × 100</div>
+
+        <div class="example example-critical">
+
+            <strong>Exemplo</strong>
+
+            Média (μ) = 10 km/L &nbsp;|&nbsp; Consumo atual (x) = 6 km/L<br>
+
+            desvio% = ((6 − 10) ÷ 10) × 100 = <strong>−40% 🚨</strong><br>
+
+            <span style="color:#64748b">→ Consumo 40% abaixo do esperado — fora do padrão.</span>
+
+        </div>
+
+    </div>
+
+
+
+    <div class="subsection">
+
+        <h3>📊 3.4 Desvio Padrão (σ)</h3>
+
+        <p>Mede a <strong>variabilidade</strong> do consumo do veículo. Um desvio padrão baixo indica comportamento consistente; um desvio padrão alto indica irregularidade no histórico.</p>
+
+        <div class="formula-label">Fórmula</div>
+
+        <div class="formula-box">σ = √[ Σ(xᵢ − μ)² ÷ (n − 1) ]</div>
+
+        <div class="example example-info">
+
+            <strong>Exemplo passo a passo</strong>
+
+            Dados: 10, 11, 9 km/L &nbsp;|&nbsp; μ = 10<br>
+
+            Diferenças: (10−10)²=0 &nbsp; (11−10)²=1 &nbsp; (9−10)²=1<br>
+
+            σ = √[(0 + 1 + 1) ÷ (3 − 1)] = √1 = <strong>σ = 1</strong><br>
+
+            <span style="color:#64748b">→ Variação pequena = veículo com consumo consistente.</span>
+
+        </div>
+
+    </div>
+
+
+
+    <div class="subsection">
+
+        <h3>🚨 3.5 Regra de Outlier (utilizada no sistema)</h3>
+
+        <p>Define o <strong>limiar de alerta estatístico</strong>. Se o consumo cair abaixo desse limite, o sistema registra uma ocorrência automaticamente. O valor de N (multiplicador do desvio, geralmente entre 1,5 e 2,5) é configurável.</p>
+
+        <div class="formula-label">Condição de alerta</div>
+
+        <div class="formula-box">consumo &lt; μ − N × σ</div>
+
+        <div class="example example-alert">
+
+            <strong>Exemplo</strong>
+
+            μ = 10 km/L &nbsp;|&nbsp; σ = 1 &nbsp;|&nbsp; N = 2<br>
+
+            Limite inferior = 10 − (2 × 1) = <strong>8 km/L</strong><br>
+
+            Consumo atual = 6 km/L → 6 &lt; 8 → <span style="font-weight:700">🚨 Alerta disparado</span>
+
+        </div>
+
+    </div>
+
+
+
+    <div class="subsection">
+
+        <h3>📊 3.6 KM Esperado (baseado no histórico)</h3>
+
+        <p>Calcula quantos quilômetros o veículo <em>deveria</em> ter percorrido com o volume abastecido, usando sua média histórica de consumo. Grandes divergências entre o esperado e o realizado indicam irregularidades.</p>
+
+        <div class="formula-label">Fórmula</div>
+
+        <div class="formula-box">km_esperado = litros × μ_consumo</div>
+
+        <div class="two-col">
+
+            <div class="example example-normal">
+
+                <strong>Situação normal</strong>
+
+                Litros: 40 &nbsp;|&nbsp; μ = 10 km/L<br>
+
+                KM esperado = <strong>400 km</strong><br>
+
+                KM realizado = 380 km → ✅ coerente
+
+            </div>
+
+            <div class="example example-critical">
+
+                <strong>Situação suspeita</strong>
+
+                Litros: 40 &nbsp;|&nbsp; μ = 10 km/L<br>
+
+                KM esperado = <strong>400 km</strong><br>
+
+                KM realizado = 150 km → 🚨 diferença de 250 km!
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+
+
+<!-- SEÇÃO 4 -->
+
+<div class="section" id="s4">
+
+    <div class="section-title">
+
+        <div class="section-num c-red">4</div>
+
+        <span class="icon">🔴</span>
+
+        <h2>Regras de Auditoria (R00–R11)</h2>
+
+    </div>
+
+    <p>O sistema aplica 12 regras objetivas a cada registro de abastecimento. Um registro pode acionar mais de uma regra simultaneamente, o que eleva automaticamente a gravidade final.</p>
+
+    <div class="rules-grid" style="margin-top:14px">
+
+
+
+        <div class="rule-card alta">
+
+            <span class="badge-grav badge-alta">ALTA</span>
+
+            <div class="rule-code">R01</div>
+
+            <div class="rule-title">Capacidade do tanque excedida</div>
+
+            <div class="rule-desc">Volume abastecido superior à capacidade máxima do tanque do veículo — fisicamente impossível sem adulteração.</div>
+
+            <div class="rule-example">Tanque: 50 L → Abastecido: 58 L 🚨</div>
+
+        </div>
+
+
+
+        <div class="rule-card media">
+
+            <span class="badge-grav badge-media">MÉDIA</span>
+
+            <div class="rule-code">R02</div>
+
+            <div class="rule-title">Consumo fora da faixa configurada</div>
+
+            <div class="rule-desc">KM/L abaixo do mínimo ou acima do máximo definido para o veículo ou modelo.</div>
+
+            <div class="rule-example">KM/L fora do intervalo [Min, Máx] configurados</div>
+
+        </div>
+
+
+
+        <div class="rule-card alta">
+
+            <span class="badge-grav badge-alta">ALTA</span>
+
+            <div class="rule-code">R03</div>
+
+            <div class="rule-title">Consumo estatisticamente crítico</div>
+
+            <div class="rule-desc">Consumo muito abaixo da média histórica, ultrapassando o limiar estatístico: consumo &lt; μ − N × σ.</div>
+
+            <div class="rule-example">Limite = 8 km/L &amp; consumo = 5 km/L → 🚨</div>
+
+        </div>
+
+
+
+        <div class="rule-card alta">
+
+            <span class="badge-grav badge-alta">ALTA</span>
+
+            <div class="rule-code">R04</div>
+
+            <div class="rule-title">Hodômetro inconsistente</div>
+
+            <div class="rule-desc">O KM registrado no abastecimento atual é menor que o KM do abastecimento anterior — hodômetro regressivo.</div>
+
+            <div class="rule-example">KM anterior: 10.000 → KM atual: 9.800 🚨</div>
+
+        </div>
+
+
+
+        <div class="rule-card alta">
+
+            <span class="badge-grav badge-alta">ALTA</span>
+
+            <div class="rule-code">R05</div>
+
+            <div class="rule-title">Lógica incoerente (pouco KM + muito combustível)</div>
+
+            <div class="rule-desc">Distância percorrida muito curta com volume abastecido muito alto — matematicamente impossível para o veículo.</div>
+
+            <div class="rule-example">50 km rodados com 40 L abastecidos 🚨</div>
+
+        </div>
+
+
+
+        <div class="rule-card media">
+
+            <span class="badge-grav badge-media">MÉDIA</span>
+
+            <div class="rule-code">R06</div>
+
+            <div class="rule-title">Abastecimentos muito próximos</div>
+
+            <div class="rule-desc">Dois abastecimentos do mesmo veículo com intervalo de tempo ou quilometragem suspeito, sugerindo duplicidade.</div>
+
+            <div class="rule-example">2 abastecimentos no mesmo dia → 🚨 suspeito</div>
+
+        </div>
+
+
+
+        <div class="rule-card media">
+
+            <span class="badge-grav badge-media">MÉDIA</span>
+
+            <div class="rule-code">R07</div>
+
+            <div class="rule-title">Preço acima do contratado</div>
+
+            <div class="rule-desc">Valor por litro praticado pelo fornecedor supera o preço estabelecido em contrato.</div>
+
+            <div class="rule-example">Contrato: R$ 5,80/L → Cobrado: R$ 6,40/L 🚨</div>
+
+        </div>
+
+
+
+        <div class="rule-card media">
+
+            <span class="badge-grav badge-media">MÉDIA</span>
+
+            <div class="rule-code">R08</div>
+
+            <div class="rule-title">Valor total inconsistente</div>
+
+            <div class="rule-desc">O valor total cobrado não corresponde ao produto entre o volume e o preço unitário.</div>
+
+            <div class="formula-box" style="margin:6px 0;padding:8px 12px;font-size:12px">valor ≠ litros × preço_unitário</div>
+
+        </div>
+
+
+
+        <div class="rule-card media">
+
+            <span class="badge-grav badge-media">MÉDIA</span>
+
+            <div class="rule-code">R09</div>
+
+            <div class="rule-title">Consumo km/L abaixo do histórico da placa</div>
+
+            <div class="rule-desc">O consumo (km/L) registrado neste abastecimento está significativamente abaixo da mediana histórica de consumo do próprio veículo — usando MAD robusto (mediana − k × 1,4826 × MAD). Sugere desvio de combustível ou problema mecânico não evidenciado pelo hodômetro.</div>
+
+            <div class="rule-example">Mediana placa: 10 km/L | MAD: 0,5 | Limite: 8,8 km/L → consumo = 6 km/L 🚨</div>
+
+        </div>
+
+
+
+        <div class="rule-card baixa">
+
+            <span class="badge-grav badge-baixa">BAIXA</span>
+
+            <div class="rule-code">R10</div>
+
+            <div class="rule-title">KM realizado abaixo do esperado</div>
+
+            <div class="rule-desc">Distância percorrida significativamente inferior ao KM esperado calculado pelo histórico de consumo (divergência &gt; 25%).</div>
+
+            <div class="rule-example">km_esperado = litros × μ → desvio &gt; 25%</div>
+
+        </div>
+
+        <div class="rule-card baixa">
+
+            <span class="badge-grav badge-baixa">BAIXA</span>
+
+            <div class="rule-code">R11</div>
+
+            <div class="rule-title">Histórico insuficiente para comparação</div>
+
+            <div class="rule-desc">A placa não possui registros históricos suficientes (mínimo 8 abastecimentos nos últimos 90 dias) para que as regras R09 e R10 sejam aplicadas com confiabilidade estatística.</div>
+
+            <div class="rule-example">Placa com 3 registros históricos → R09/R10 não aplicadas 🔶</div>
+
+        </div>
+
+
+
+    </div>
+
+    <div class="example example-info" style="margin-top:14px">
+
+        <strong>Combinação de regras</strong>
+
+        As regras podem se acumular em um mesmo registro. Quanto mais regras acionadas, maior a gravidade final. Exemplo: R02 + R05 acionadas juntas → classificação ALTA automática.
+
+    </div>
+
+</div>
+
+
+
+<!-- SEÇÃO 5 -->
+
+<div class="section" id="s5">
+
+    <div class="section-title">
+
+        <div class="section-num c-indigo">5</div>
+
+        <span class="icon">🤖</span>
+
+        <h2>Arquitetura de Agentes de IA</h2>
+
+    </div>
+
+    <p>O sistema não é um programa único — é uma <strong>equipe de agentes especializados</strong> que trabalham em sequência, cada um com responsabilidade exclusiva sobre uma etapa da auditoria:</p>
+
+    <div class="agent-pipeline">
+
+        <div class="agent-step">📥 Ingestion</div><div class="agent-arrow">→</div>
+
+        <div class="agent-step">🔍 Validação</div><div class="agent-arrow">→</div>
+
+        <div class="agent-step"> Regras</div><div class="agent-arrow">→</div>
+
+        <div class="agent-step">📈 Histórico</div><div class="agent-arrow">→</div>
+
+        <div class="agent-step">⚖️ Classificação</div><div class="agent-arrow">→</div>
+
+        <div class="agent-step">📋 Relatório</div><div class="agent-arrow">→</div>
+
+        <div class="agent-step">📬 Notificação</div>
+
+    </div>
+
+    <div class="agent-cards">
+
+        <div class="agent-card">
+
+            <div class="agent-icon">📥</div>
+
+            <div class="agent-name">AgentIngestion</div>
+
+            <div class="agent-role">Receptor de Dados</div>
+
+            <ul><li>Lê a planilha Excel/CSV</li><li>Padroniza nomes de colunas</li><li>Converte datas e números</li><li>Calcula consumo quando ausente</li></ul>
+
+        </div>
+
+        <div class="agent-card">
+
+            <div class="agent-icon">🔍</div>
+
+            <div class="agent-name">AgentValidacao</div>
+
+            <div class="agent-role">Filtro de Qualidade</div>
+
+            <ul><li>Remove registros inválidos</li><li>Identifica duplicatas</li><li>Garante coerência dos números</li></ul>
+
+        </div>
+
+        <div class="agent-card">
+
+            <div class="agent-icon"></div>
+
+            <div class="agent-name">AgentRegras</div>
+
+            <div class="agent-role">Auditor Técnico</div>
+
+            <ul><li>Aplica regras R00 a R08</li><li>Gera evidência por ocorrência</li><li>Responde: "esse registro faz sentido?"</li></ul>
+
+        </div>
+
+        <div class="agent-card">
+
+            <div class="agent-icon">📈</div>
+
+            <div class="agent-name">AgentHistorico</div>
+
+            <div class="agent-role">Analista Estatístico</div>
+
+            <ul><li>Calcula μ e σ por veículo</li><li>Detecta outliers estatísticos</li><li>Responde: "é normal para esse carro?"</li></ul>
+
+        </div>
+
+        <div class="agent-card">
+
+            <div class="agent-icon">⚖️</div>
+
+            <div class="agent-name">AgentClassificacao</div>
+
+            <div class="agent-role">Supervisor de Gravidade</div>
+
+            <ul><li>Agrega todas as regras acionadas</li><li>Define gravidade final</li><li>Combina evidências múltiplas</li></ul>
+
+        </div>
+
+        <div class="agent-card">
+
+            <div class="agent-icon">📋</div>
+
+            <div class="agent-name">AgentRelatorio</div>
+
+            <div class="agent-role">Redator Técnico</div>
+
+            <ul><li>Gera relatório consolidado</li><li>Organiza dados por gravidade</li><li>Produz resumo executivo</li></ul>
+
+        </div>
+
+        <div class="agent-card">
+
+            <div class="agent-icon">📬</div>
+
+            <div class="agent-name">AgentNotificacao</div>
+
+            <div class="agent-role">Redator Administrativo</div>
+
+            <ul><li>Gera minutas de notificação</li><li>Agrupa ocorrências por condutor</li><li>Prazo padrão: 48 horas</li></ul>
+
+        </div>
+
+    </div>
+
+    <div class="example example-info" style="margin-top:14px">
+
+        <strong>Comparação com uma repartição pública</strong>
+
+        👉 Um <em>recebe</em> → um <em>confere</em> → um <em>armazena</em> → um <em>analisa</em> → um <em>compara</em> → um <em>decide</em> → um <em>documenta</em> → um <em>notifica</em>.
+
+    </div>
+
+</div>
+
+
+
+<!-- SEÇÃO 6 -->
+
+<div class="section" id="s6">
+
+    <div class="section-title">
+
+        <div class="section-num c-orange">6</div>
+
+        <span class="icon">🚨</span>
+
+        <h2>Classificação de Gravidade</h2>
+
+    </div>
+
+    <p>Cada ocorrência recebe uma classificação com base nas regras acionadas e na intensidade do desvio detectado.</p>
+
+    <table class="grav-table">
+
+        <thead><tr><th>Nível</th><th>Critério</th><th>Ação esperada</th></tr></thead>
+
+        <tbody>
+
+            <tr>
+
+                <td><span class="chip-alta">🔴 ALTA</span></td>
+
+                <td>Regra crítica acionada (R01, R03, R04 ou R05), ou combinação de múltiplas regras, ou desvio estatístico severo.</td>
+
+                <td>Notificação administrativa imediata. Prazo de 48 horas para justificativa formal.</td>
+
+            </tr>
+
+            <tr>
+
+                <td><span class="chip-media">🟡 MÉDIA</span></td>
+
+                <td>Regras secundárias (R02, R06, R07, R08, R09) ou desvio moderado sem combinação crítica.</td>
+
+                <td>Monitoramento preventivo ou orientação ao condutor/unidade responsável.</td>
+
+            </tr>
+
+            <tr>
+
+                <td><span class="chip-baixa">🟢 BAIXA</span></td>
+
+                <td>Desvio pequeno dentro da margem aceitável. Geralmente R10 isolado com divergência entre 25–35%.</td>
+
+                <td>Registro para histórico. Sem intervenção imediata necessária.</td>
+
+            </tr>
+
+        </tbody>
+
+    </table>
+
+    <div class="example example-alert" style="margin-top:12px">
+
+        <strong>Princípio da combinação de regras</strong>
+
+        Múltiplos alertas em um mesmo registro <strong>elevam a gravidade final automaticamente</strong>. Exemplo: R02 (consumo fora da faixa) + R05 (lógica incoerente) → resultado final ALTA.
+
+    </div>
+
+</div>
+
+
+
+<!-- SEÇÃO 7 -->
+
+<div class="section" id="s7">
+
+    <div class="section-title">
+
+        <div class="section-num c-green">7</div>
+
+        <span class="icon">🧾</span>
+
+        <h2>Ação da Equipe</h2>
+
+    </div>
+
+    <div class="two-col">
+
+        <div>
+
+            <p style="font-weight:600;color:#16a34a;margin-bottom:8px">✔️ O que fazer</p>
+
+            <ul class="checklist">
+
+                <li>Identificar a ocorrência na lista de alertas</li>
+
+                <li>Ler a evidência técnica gerada pelo sistema</li>
+
+                <li>Classificar o nível de prioridade</li>
+
+                <li>Enviar a notificação ao condutor ou unidade</li>
+
+                <li>Aguardar a justificativa no prazo de 48h</li>
+
+                <li>Tomar decisão com base na defesa apresentada</li>
+
+                <li>Registrar o resultado no sistema</li>
+
+            </ul>
+
+        </div>
+
+        <div>
+
+            <p style="font-weight:600;color:#dc2626;margin-bottom:8px">✗ O que evitar</p>
+
+            <ul class="checklist dont">
+
+                <li>Acusar o condutor sem análise prévia</li>
+
+                <li>Ignorar o contexto operacional do veículo</li>
+
+                <li>Decidir com base em opinião, sem evidência</li>
+
+                <li>Descartar ocorrências sem justificativa formal</li>
+
+            </ul>
+
+        </div>
+
+    </div>
+
+    <div class="quote" style="margin-top:14px">💬 &ldquo;Isso faz sentido na vida real? Sempre pergunte isso antes de agir.&rdquo;</div>
+
+    <div class="example example-info" style="margin-top:12px">
+
+        <strong>Fluxo administrativo resumido</strong>
+
+        Identificar → Validar → Classificar → Notificar (48h) → Analisar justificativa → Decidir → Registrar
+
+    </div>
+
+</div>
+
+
+
+<!-- SEÇÃO 8 -->
+
+<div class="section" id="s8">
+
+    <div class="section-title">
+
+        <div class="section-num c-yellow">8</div>
+
+        <span class="icon">⚠️</span>
+
+        <h2>Limites do Sistema</h2>
+
+    </div>
+
+    <div class="compare">
+
+        <div class="compare-col before">
+
+            <h4>O sistema NÃO faz</h4>
+
+            <ul>
+
+                <li>Acusa condutores diretamente</li>
+
+                <li>Substitui a análise e o julgamento humano</li>
+
+                <li>Considera fatores externos automaticamente</li>
+
+                <li>Garante certeza absoluta — gera hipóteses técnicas</li>
+
+                <li>Funciona como prova jurídica isolada</li>
+
+            </ul>
+
+        </div>
+
+        <div class="compare-col after">
+
+            <h4>O sistema FAZ</h4>
+
+            <ul>
+
+                <li>Detecta padrões estatisticamente anômalos</li>
+
+                <li>Aplica regras objetivas e padronizadas</li>
+
+                <li>Gera evidência numérica rastreável</li>
+
+                <li>Produz notificações formais padronizadas</li>
+
+                <li>Mantém histórico auditável por veículo</li>
+
+            </ul>
+
+        </div>
+
+    </div>
+
+    <div class="example example-alert" style="margin-top:14px">
+
+        <strong>📌 Fatores externos a considerar antes de concluir</strong>
+
+        Condições de trânsito intenso &nbsp;|&nbsp; Carga pesada ou transporte especial &nbsp;|&nbsp; Manutenção em andamento &nbsp;|&nbsp; Uso operacional atípico do veículo &nbsp;|&nbsp; Falha de hodômetro
+
+    </div>
+
+</div>
+
+
+
+<!-- SEÇÃO 9 -->
+
+<div class="section" id="s9">
+
+    <div class="section-title">
+
+        <div class="section-num c-teal">9</div>
+
+        <span class="icon">🎓</span>
+
+        <h2>Treinamento Prático</h2>
+
+    </div>
+
+    <p>Use os exercícios abaixo para treinar a equipe na leitura e interpretação das ocorrências geradas pelo sistema.</p>
+
+
+
+    <div class="exercise">
+
+        <div class="ex-header"><div class="ex-num">1</div><div class="ex-title">Verificação de consumo básico</div></div>
+
+        <div class="ex-data">
+
+            <div class="ex-data-item"><span class="label">KM Rodado</span><span class="value">100</span></div>
+
+            <div class="ex-data-item"><span class="label">Litros</span><span class="value">10</span></div>
+
+            <div class="ex-data-item"><span class="label">Consumo</span><span class="value">10 km/L</span></div>
+
+        </div>
+
+        <div class="ex-result ex-ok">✅ Dentro do padrão — nenhuma regra acionada.</div>
+
+    </div>
+
+
+
+    <div class="exercise">
+
+        <div class="ex-header"><div class="ex-num">2</div><div class="ex-title">Consumo muito baixo</div></div>
+
+        <div class="ex-data">
+
+            <div class="ex-data-item"><span class="label">KM Rodado</span><span class="value">100</span></div>
+
+            <div class="ex-data-item"><span class="label">Litros</span><span class="value">20</span></div>
+
+            <div class="ex-data-item"><span class="label">Consumo</span><span class="value">5 km/L</span></div>
+
+        </div>
+
+        <div class="ex-result ex-nok">🚨 Consumo abaixo do limite mínimo — aciona R02 e possivelmente R03 (outlier estatístico).</div>
+
+    </div>
+
+
+
+    <div class="exercise">
+
+        <div class="ex-header"><div class="ex-num">3</div><div class="ex-title">Hodômetro regressivo</div></div>
+
+        <div class="ex-data">
+
+            <div class="ex-data-item"><span class="label">KM Anterior</span><span class="value">10.000</span></div>
+
+            <div class="ex-data-item"><span class="label">KM Atual</span><span class="value">9.900</span></div>
+
+        </div>
+
+        <div class="ex-result ex-nok">🚨 KM atual menor que o anterior — aciona R04 (hodômetro inconsistente). Gravidade ALTA.</div>
+
+    </div>
+
+
+
+    <div class="exercise">
+
+        <div class="ex-header"><div class="ex-num">4</div><div class="ex-title">KM muito abaixo do esperado</div></div>
+
+        <div class="ex-data">
+
+            <div class="ex-data-item"><span class="label">Litros</span><span class="value">40</span></div>
+
+            <div class="ex-data-item"><span class="label">Média (μ)</span><span class="value">10 km/L</span></div>
+
+            <div class="ex-data-item"><span class="label">KM Esperado</span><span class="value">400 km</span></div>
+
+            <div class="ex-data-item"><span class="label">KM Realizado</span><span class="value">150 km</span></div>
+
+        </div>
+
+        <div class="ex-result ex-nok">🚨 Diferença de 250 km (62,5%) — aciona R05 (lógica incoerente) e R10 (KM abaixo do esperado). Gravidade ALTA.</div>
+
+    </div>
+
+
+
+    <div class="exercise">
+
+        <div class="ex-header"><div class="ex-num">5</div><div class="ex-title">Dois abastecimentos no mesmo dia</div></div>
+
+        <div class="ex-data">
+
+            <div class="ex-data-item"><span class="label">Placa</span><span class="value">ABC-1234</span></div>
+
+            <div class="ex-data-item"><span class="label">1º Abastecimento</span><span class="value">14/04 08:15</span></div>
+
+            <div class="ex-data-item"><span class="label">2º Abastecimento</span><span class="value">14/04 11:20</span></div>
+
+        </div>
+
+        <div class="ex-result ex-nok">🚨 Intervalo muito curto — aciona R06 (abastecimentos próximos). Verificar se o tanque comportava os dois volumes e se o KM rodado é coerente.</div>
+
+    </div>
+
+</div>
+
+
+
+<!-- SEÇÃO 10 -->
+
+<div class="section" id="s10">
+
+    <div class="section-title">
+
+        <div class="section-num c-slate">10</div>
+
+        <span class="icon">🎯</span>
+
+        <h2>Mentalidade Final</h2>
+
+    </div>
+
+    <div class="quote">💬 &ldquo;O sistema não diz quem errou. Ele mostra onde os números não fazem sentido.&rdquo;</div>
+
+    <p style="margin-top:16px">Com esse sistema, a gestão de frota passa a contar com:</p>
+
+    <div class="compare" style="margin-top:12px">
+
+        <div class="compare-col before">
+
+            <h4>❌ Antes</h4>
+
+            <ul>
+
+                <li>Análise manual e demorada</li>
+
+                <li>Critérios subjetivos</li>
+
+                <li>Sem rastreabilidade por veículo</li>
+
+                <li>Difícil de padronizar e replicar</li>
+
+            </ul>
+
+        </div>
+
+        <div class="compare-col after">
+
+            <h4>✅ Depois</h4>
+
+            <ul>
+
+                <li>Auditoria automática e sistemática</li>
+
+                <li>Critérios objetivos e documentados</li>
+
+                <li>Histórico rastreável por veículo</li>
+
+                <li>Notificações padronizadas e auditáveis</li>
+
+            </ul>
+
+        </div>
+
+    </div>
+
+    <div class="quote" style="margin-top:16px;background:linear-gradient(135deg,#f0fdf4,#ecfdf5);border-left-color:#16a34a;color:#166534">
+
+        🚀 &ldquo;Cada agente resolve uma parte do problema — juntos, eles garantem a auditoria completa.&rdquo;
+
+    </div>
+
+    <div class="info-box" style="margin-top:16px;background:#eff6ff;border-color:#bfdbfe">
+
+        <strong>💡 Princípio fundamental:</strong><br>
+
+        Toda inconsistência deve ser comprovada por números. A defesa do condutor também deve ser baseada em fatos documentados. O sistema garante tratamento igual e rastreável para todos os registros analisados.
+
+    </div>
+
+</div>
+
+
+
+</div>
+
+</html>

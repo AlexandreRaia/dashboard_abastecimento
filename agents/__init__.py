@@ -1,10 +1,14 @@
-from .orchestrator import OrchestradorAuditoria, criar_agente_auditoria
+"""
+Pacote de agentes de auditoria.
+
+OrchestradorAuditoria é o único ponto de entrada público.
+"""
+from .orchestrator import OrchestradorAuditoria
 from .config import THRESHOLDS, TANK_CAPACITY, COLUMN_MAP
 
 __all__ = [
-    'OrchestradorAuditoria',
-    'criar_agente_auditoria',
-    'THRESHOLDS',
-    'TANK_CAPACITY',
-    'COLUMN_MAP',
+    "OrchestradorAuditoria",
+    "THRESHOLDS",
+    "TANK_CAPACITY",
+    "COLUMN_MAP",
 ]

@@ -17,3 +17,4 @@ requests
 zxing-cpp
 playwright
 pymupdf
+python-dotenv>=1.0.0
