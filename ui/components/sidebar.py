@@ -95,27 +95,6 @@ def render_sidebar(df_full: pd.DataFrame) -> tuple[
         (df_filtrado, data_inicio, data_fim, secretarias, combustiveis, abrir_editor)
     """
     with st.sidebar:
-        # ── Marca ──────────────────────────────────────────────────────────
-        st.markdown(
-            """
-            <div class="sidebar-brand">
-                <div class="sidebar-brand-icon">⛽</div>
-                <div>
-                    <div class="sidebar-brand-title">KPIs Abastecimento</div>
-                    <div class="sidebar-brand-sub">Santana de Parnaíba</div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        # ── Navegação ──────────────────────────────────────────────────────
-        st.markdown('<div class="sidebar-section">📑 PÁGINAS</div>', unsafe_allow_html=True)
-        st.page_link("pages/Dashboard.py",   label="📊 Dashboard",  use_container_width=True)
-        st.page_link("pages/Auditoria.py",    label="🔍 Auditoria",  use_container_width=True)
-        st.page_link("pages/Manutencao.py",   label="🔧 Manutenção", use_container_width=True)
-        st.page_link("pages/lab.py",          label="🧪 Lab",        use_container_width=True)
-
         # ── Filtros ─────────────────────────────────────────────────────────
         data_inicio = data_fim = None
         selected_secretaria: list[str] = []
