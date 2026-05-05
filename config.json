@@ -200,8 +200,11 @@
     "host": "smtp.gmail.com",
     "port": 465,
     "remetente": "alexandre.25755@santanadeparnaiba.sp.gov.br",
-    "senha_b64": "b3BsdCBiY3F4IG9kZXggaW1neQ==",
+    "senha_b64": "b3BsdGJjcXhvZGV4aW1neQ==",
     "usar_ssl": true
+  },
+  "google_sheets": {
+    "manutencao_csv_url": "https://docs.google.com/spreadsheets/d/e/2PACX-1vSo8tZY_knN_N60C0MZNeaq68p1MBwLNeqM_qFrN5QBPi9vaPAErTXP2MxAPcpDeHMVR8-L_5Fg7WdS/pub?gid=1541580256&single=true&output=csv"
   },
   "contatos": {
     "secretarias": {

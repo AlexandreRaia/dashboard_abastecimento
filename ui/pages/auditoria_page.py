@@ -28,6 +28,7 @@ import plotly.express as px
 import streamlit as st
 
 from agents import OrchestradorAuditoria
+from agents.notification import _normalizar_condutor as _fmt_condutor
 from agents.config import (
     MODEL_CANONICAL_DISPLAY,
     TANK_CAPACITY,
@@ -440,7 +441,8 @@ def _render_ocorrencias(resultado: dict) -> None:
     def _label(row):
         dt = row.get("data_hora")
         dt_str = dt.strftime("%d/%m/%Y %H:%M") if hasattr(dt, "strftime") else str(dt)
-        return f"[{row.get('codigo_regra','?')}] {row.get('placa','?')} — {dt_str} — {row.get('condutor','?')}"
+        cond = _fmt_condutor(row.get('condutor', ''))
+        return f"[{row.get('codigo_regra','?')}] {row.get('placa','?')} — {dt_str} — {cond}"
 
     opcoes = {_label(row): row["id_ocorrencia"]
               for _, row in pendentes.iterrows()}
@@ -682,10 +684,11 @@ def _render_notificacoes(resultado: dict) -> None:
     for i, notif in enumerate(notifs):
         placa     = notif.get("placa", f"#{i+1}")
         grav      = notif.get("gravidade_max", "")
-        condutor  = notif.get("condutor", "")
+        condutor  = _fmt_condutor(notif.get("condutor", ""))
         unidade   = notif.get("unidade", "")
         texto     = notif.get("texto_notificacao", notif.get("minuta", ""))
-        label_extra = f" · {condutor}" if condutor else ""
+        _cond_display = condutor if condutor != "Nao identificado" else ""
+        label_extra = f" · {_cond_display}" if _cond_display else ""
         label_extra += f" · {unidade}" if unidade else ""
         label = f"📄 Placa **{placa}**{label_extra} — {_grav_badge(grav)}"
 
