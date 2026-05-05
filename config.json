@@ -2,7 +2,6 @@
   "desconto_percentual": 0.0405,
   "api_sisatec": {
     "codigo": "11845",
-    "key": "547536145C3E6FA5EDEBCCF4403290613C261039",
     "base_url": "https://ws.sisatec.com.br/api/abastecimento/bydata"
   },
   "secretarias": [
@@ -28,8 +27,8 @@
     },
     {
       "sigla": "SMDS",
-      "empenho_2026": 778770.00,
-      "limite_mensal": 64897.50,
+      "empenho_2026": 778770.0,
+      "limite_mensal": 64897.5,
       "limites_litros": {
         "gasolina": 31,
         "alcool": 10269,
@@ -38,8 +37,8 @@
     },
     {
       "sigla": "SMSU",
-      "empenho_2026": 1560000.00,
-      "limite_mensal": 130000.00,
+      "empenho_2026": 1560000.0,
+      "limite_mensal": 130000.0,
       "limites_litros": {
         "gasolina": 670,
         "alcool": 30550,
@@ -58,8 +57,8 @@
     },
     {
       "sigla": "SMS",
-      "empenho_2026": 1200000.00,
-      "limite_mensal": 100000.00,
+      "empenho_2026": 1200000.0,
+      "limite_mensal": 100000.0,
       "limites_litros": {
         "gasolina": 50,
         "alcool": 5975,
@@ -78,8 +77,8 @@
     },
     {
       "sigla": "SMCS",
-      "empenho_2026": 42249.60,
-      "limite_mensal": 3520.80,
+      "empenho_2026": 42249.6,
+      "limite_mensal": 3520.8,
       "limites_litros": {
         "gasolina": 0,
         "alcool": 900,
@@ -88,8 +87,8 @@
     },
     {
       "sigla": "SMO",
-      "empenho_2026": 51638.40,
-      "limite_mensal": 4303.20,
+      "empenho_2026": 51638.4,
+      "limite_mensal": 4303.2,
       "limites_litros": {
         "gasolina": 0,
         "alcool": 1100,
@@ -98,8 +97,8 @@
     },
     {
       "sigla": "SMGAED",
-      "empenho_2026": 8215.20,
-      "limite_mensal": 684.60,
+      "empenho_2026": 8215.2,
+      "limite_mensal": 684.6,
       "limites_litros": {
         "gasolina": 0,
         "alcool": 175,
@@ -118,7 +117,7 @@
     },
     {
       "sigla": "SMOU",
-      "empenho_2026": 717886.30,
+      "empenho_2026": 717886.3,
       "limite_mensal": 59823.86,
       "limites_litros": {
         "gasolina": 1016,
@@ -128,8 +127,8 @@
     },
     {
       "sigla": "SME",
-      "empenho_2026": 370116.00,
-      "limite_mensal": 30843.00,
+      "empenho_2026": 370116.0,
+      "limite_mensal": 30843.0,
       "limites_litros": {
         "gasolina": 0,
         "alcool": 2500,
@@ -196,5 +195,39 @@
         "diesel": 0
       }
     }
-  ]
+  ],
+  "smtp": {
+    "host": "smtp.gmail.com",
+    "port": 465,
+    "remetente": "alexandre.25755@santanadeparnaiba.sp.gov.br",
+    "senha_b64": "b3BsdGJjcXhvZGV4aW1neQ==",
+    "usar_ssl": true
+  },
+  "google_sheets": {
+    "manutencao_csv_url": "https://docs.google.com/spreadsheets/d/e/2PACX-1vSo8tZY_knN_N60C0MZNeaq68p1MBwLNeqM_qFrN5QBPi9vaPAErTXP2MxAPcpDeHMVR8-L_5Fg7WdS/pub?gid=1541580256&single=true&output=csv"
+  },
+  "contatos": {
+    "secretarias": {
+      "SEMUTTRANS": "",
+      "SMCC": "",
+      "SMDS": "",
+      "SMSU": "",
+      "SMAFEL": "",
+      "SMS": "",
+      "SMMAP": "",
+      "SMCS": "",
+      "SMO": "",
+      "SMGAED": "",
+      "SMF": "",
+      "SMOU": "",
+      "SME": "",
+      "SMA": "",
+      "SMTI": "",
+      "SMSM": "",
+      "SEMEDES": "",
+      "SMCT": "",
+      "SMMF": ""
+    },
+    "condutores": {}
+  }
 }

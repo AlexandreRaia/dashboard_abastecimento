@@ -1,6 +1,25 @@
 from datetime import datetime
 
 
+def _normalizar_condutor(val) -> str:
+    """
+    Normaliza o nome do condutor:
+    - Converte None, pd.NA, float NaN → 'Nao identificado'
+    - Trata strings 'nan', '<NA>', 'None', vazia → 'Nao identificado'
+    - Caso contrário, retorna o valor com espaços normalizados.
+    """
+    import re as _re
+    try:
+        s = str(val).strip() if val is not None else ''
+    except Exception:
+        s = ''
+    # Valores que indicam ausência de dado
+    if s.lower() in ('nan', '<na>', 'none', 'null', ''):
+        return 'Nao identificado'
+    # Normaliza múltiplos espaços internos
+    return _re.sub(r'\s+', ' ', s).strip()
+
+
 class AgentNotificacao:
     """
     Agente 7 — Comunicacao Administrativa.
@@ -21,7 +40,7 @@ class AgentNotificacao:
             if grav not in self.THRESHOLD_GRAVIDADE:
                 continue
 
-            condutor  = oc.get('condutor', 'Nao identificado')
+            condutor  = _normalizar_condutor(oc.get('condutor', ''))
             placa     = oc.get('placa', '?')
             unidade   = (oc.get('unidade') or '').strip()
             data_hora = oc.get('data_hora')

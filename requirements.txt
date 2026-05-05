@@ -17,3 +17,5 @@ requests
 zxing-cpp
 playwright
 pymupdf
+python-dotenv>=1.0.0
+streamlit-authenticator>=0.4.2

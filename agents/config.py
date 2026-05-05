@@ -58,6 +58,7 @@ TANK_CAPACITY = {
     'caminhao': 120,
     'kombi':    55,
     'ducato':   95,
+    'doblo':    60,
 }
 
 # Canonizacao de modelos para reduzir variacoes de escrita na base.
@@ -72,6 +73,16 @@ MODEL_CANONICAL_DISPLAY = {
     'cb 500':        'CB 500X',
     'vm 290':        'VM 290',
     'gl 2.5':        'GL 2.5',
+    '208 active':    'Peugeot 208',
+    'm niks':        'Ambulância',
+    '416 cdi':       'Sprinter 416',
+    '11.180 drc':    'Delivery 11.180',
+    '9.170 drc':     'Delivery 9.170',
+    '17.210':        'Constellation 17.210',
+    '18.260 crm':    'Constellation 18.260',
+    '32.360':        'Constellation 32.360',
+    '1039':          'Cargo 1039',
+    'robust':        'Robust 18.260',
     # ── Ford ────────────────────────────────────────────────────────────────
     'cargo':         'Cargo',    # antes de 'argo'!
     'fiesta':        'Fiesta',
@@ -201,8 +212,9 @@ THRESHOLDS = {
     'tolerancia_valor_total_pct':     0.02,  # 2% de diferença tolerada em valor total (era fixo R$0,10)
     'tolerancia_valor_total_abs':     0.50,  # piso absoluto: diferenças menores que R$0,50 ignoradas
     'tolerancia_preco_unitario':      0.05,  # R$/L tolerado no preço unitário
-    'minimo_historico_para_comparacao': 8,   # mín de registros históricos para R09/R10 (8 = ~2 meses)
-    'dias_historico_rolling':                90,  # janela móvel de dias para calcular médias (R03/R09/R10)
+    'minimo_historico_para_comparacao': 5,   # mín de registros históricos para R09/R10 (5 = ~1 mês se semanal)
+    'dias_historico_rolling':                90,  # janela primária em dias para calcular médias (R03/R09/R10)
+    'dias_historico_rolling_fallback':       180, # janela de fallback por placa quando 90 dias tem < mínimo
     'usar_mad_outlier':               True,  # True = MAD robusto; False = mean±σ clássico
     'fator_mad_historico':            3.0,   # fator k para MAD: mediana ± k*1.4826*MAD (R09)
     'fator_desvio_historico':         2.0,   # fator σ para fallback mean±σ (R09 sem MAD)
